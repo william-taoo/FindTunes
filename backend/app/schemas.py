@@ -28,7 +28,7 @@ class Playlist(BaseModel):
     spotify_id: str
     playlist_id: str
     playlist_name: str
-    playlist_image: Optional[str] = None
+    playlist_image: Optional[list[str]] = None
     playlist_url: Optional[str] = None
 
 class UserResponse(BaseModel):

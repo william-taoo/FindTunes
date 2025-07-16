@@ -1,9 +1,5 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, JSONResponse
-import httpx
-import os
-from typing import Dict, Any
 from app.routers import spotify, profile
 
 app = FastAPI()

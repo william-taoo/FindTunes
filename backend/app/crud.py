@@ -1,3 +1,4 @@
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from . import models, schemas
@@ -140,3 +141,20 @@ async def get_user_profile(db: AsyncSession, spotify_id: str) -> schemas.Profile
         "top_artists": top_artists,
         "playlists": playlists
     }
+
+# Delete user profile and listening data
+async def delete_user_data(db: AsyncSession, spotify_id: str) -> None:
+    await db.execute(
+        delete(models.UserTopTracks).where(models.UserTopTracks.spotify_id == spotify_id)
+    )
+    await db.execute(
+        delete(models.UserTopArtists).where(models.UserTopArtists.spotify_id == spotify_id)
+    )
+    await db.execute(
+        delete(models.UserPlaylists).where(models.UserPlaylists.spotify_id == spotify_id)
+    )
+    await db.execute(
+        delete(models.User).where(models.User.spotify_id == spotify_id)
+    )
+
+    await db.commit()

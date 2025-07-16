@@ -44,6 +44,6 @@ const AuthRedirectPage = () => {
     }, [searchParams, router]);
 
     return <p>Signing you in...</p>;
-}
+};
 
 export default AuthRedirectPage;

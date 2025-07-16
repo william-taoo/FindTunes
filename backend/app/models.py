@@ -62,5 +62,5 @@ class UserPlaylists(Base):
     spotify_id = Column(String, ForeignKey("users.spotify_id"), nullable=False, index=True)
     playlist_id = Column(String, nullable=False)
     playlist_name = Column(String, nullable=False)
-    playlist_image = Column(Text, nullable=True)
+    playlist_image = Column(ARRAY(String), nullable=True)
     playlist_url = Column(Text, nullable=True)

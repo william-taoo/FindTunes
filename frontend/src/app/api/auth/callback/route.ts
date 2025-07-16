@@ -17,4 +17,4 @@ export async function GET(req: NextRequest) {
 
     // Redirect to middleman to handle token exchange and set localStorage
     return NextResponse.redirect(new URL(`/auth/redirect?code=${ code }&state=${ state }`, req.url));
-}
+};

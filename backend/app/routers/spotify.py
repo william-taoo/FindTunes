@@ -3,11 +3,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 import httpx
-import secrets
 import os
 from dotenv import load_dotenv
 from ..database import get_db
-from .. import models, schemas, crud
+from .. import crud
 from typing import Any
 import base64
 
@@ -33,8 +32,6 @@ async def get_spotify_user_data(access_token: str) -> dict[str, Any]:
 # Endpoint to handle token exchange
 @router.post('/token')
 async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(get_db)):
-    print("hit /token endpoint")
-
     # Get authorization request code from frontend
     code = (await request.json()).get('code')
     if not code:
@@ -71,8 +68,6 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
         expires_in = token_data.get('expires_in', 3600)
         expires_at = datetime.now() + timedelta(seconds=expires_in)
 
-        print(f"Access Token: {access_token}")
-
         # Get user profile data
         user_data = await get_spotify_user_data(access_token)
 
@@ -82,31 +77,27 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
         # Check if user already exists in the database
         user = await crud.get_user_by_spotify_id(db, user_data['id']) # id is spotify_id
         if user:
-            # Update existing user with new tokens and expiration
-            user.access_token = access_token
-            user.refresh_token = refresh_token
-            user.token_expires_at = expires_at
-            user.raw_data = str(user_data)
-            print(f"User access token is: {user.access_token}")
-        else:
-            # Prepare user data for database
-            user_dict = {
-                'spotify_id': user_data['id'],
-                'display_name': user_data.get('display_name', ''),
-                'email': user_data.get('email'),
-                'country': user_data.get('country', ''),
-                'profile_image_url': user_data.get('images', [{}])[0].get('url'),
-                'followers_count': user_data.get('followers', {}).get('total', 0),
-                'product': user_data.get('product'),
-                'spotify_profile_url': user_data.get('external_urls', {}).get('spotify'),
-                'access_token': access_token,
-                'refresh_token': refresh_token,
-                'token_expires_at': expires_at,
-                'raw_data': str(user_data)  # Storing as string for reference
-            }
+            # Delete the user data including top songs/artists/playlists to get fresh data
+            await crud.delete_user_data(db, user_data['id'])
 
-            # Create new user
-            user = await crud.create_user(db, user_dict)
+        # Prepare user data for database
+        user_dict = {
+            'spotify_id': user_data['id'],
+            'display_name': user_data.get('display_name', ''),
+            'email': user_data.get('email'),
+            'country': user_data.get('country', ''),
+            'profile_image_url': user_data.get('images', [{}])[0].get('url'),
+            'followers_count': user_data.get('followers', {}).get('total', 0),
+            'product': user_data.get('product'),
+            'spotify_profile_url': user_data.get('external_urls', {}).get('spotify'),
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'token_expires_at': expires_at,
+            'raw_data': str(user_data)  # Storing as string for reference
+        }
+
+        # Create new user
+        user = await crud.create_user(db, user_dict)
 
         # Fetch user's top tracks, artists, and playlists
         headers = { 'Authorization': f'Bearer { access_token }' }
@@ -140,9 +131,6 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
         existing_track_ids = {track.track_id for track in user_top_tracks}
         existing_artist_ids = {artist.artist_id for artist in user_top_artists}
         existing_playlist_ids = {playlist.playlist_id for playlist in user_playlists}
-
-        # print(top_tracks[0])
-        # print(top_artists[0])
 
         # Store this information in the database
         if top_tracks:
@@ -180,7 +168,7 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
                     'artist_url': artist['external_urls']['spotify'],
                     'genres': artist.get('genres', []),
                     'popularity': artist['popularity'],
-                    'images': [image['url'] for image in track['album']['images']] if track['album']['images'] else []
+                    'images': [image['url'] for image in artist['images']] if artist['images'] else []
                 })
 
             await crud.create_user_top_artists(db, user_data['id'], artists_to_store)
@@ -196,7 +184,7 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
                     'spotify_id': user_data['id'],
                     'playlist_id': playlist['id'],
                     'playlist_name': playlist['name'],
-                    'playlist_image': playlist['images'][0]['url'] if playlist['images'] else None,
+                    'playlist_image': [image['url'] for image in playlist['images']] if playlist['images'] else [],
                     'playlist_url': playlist['external_urls']['spotify'],
                 })
             
