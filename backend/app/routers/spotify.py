@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 import httpx
 import os
 from dotenv import load_dotenv
-from ..database import get_db
-from .. import crud
+from ..db.database import get_db
+from ..db import crud
 from typing import Any
 import base64
 
@@ -111,7 +111,7 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
 
         # Get top artists
         top_artists_response = await client.get(
-            'https://api.spotify.com/v1/me/top/artists?time_range=short_term&limit=10',
+            'https://api.spotify.com/v1/me/top/artists?time_range=short_term&limit=50',
             headers=headers
         )
         top_artists = top_artists_response.json().get('items', []) if top_artists_response.status_code == 200 else []

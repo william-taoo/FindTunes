@@ -64,3 +64,4 @@ class UserPlaylists(Base):
     playlist_name = Column(String, nullable=False)
     playlist_image = Column(ARRAY(String), nullable=True)
     playlist_url = Column(Text, nullable=True)
+    retrieved_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)

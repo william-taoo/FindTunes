@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Spotify Song Recommender",
+  title: "FindTunes",
   description: "App that recommends hand-picked songs from a Spotify user and utilizes their top artists, tracks, and playlists.",
 };
 

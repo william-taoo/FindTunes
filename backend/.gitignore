@@ -1,2 +1,5 @@
 .env
 alembic.ini
+app/__pycache__
+app/db/__pycache__
+app/routers/__pycache__

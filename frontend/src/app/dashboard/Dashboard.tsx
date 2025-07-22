@@ -90,11 +90,13 @@ export default function Profile() {
             </div>
 
             <div className="w-full lg:w-1/2 space-y-6">
-                <div>
-                    <TopArtists top_artists={data.top_artists} />
-                </div>
-
                 <div className="w-full  space-y-6 h-[calc(100vh-200px)]">
+                    <div className="flex flex-col h-11/20">
+                        <div className="overflow-y-auto pr-2 flex-1">
+                            <TopArtists top_artists={data.top_artists} />
+                        </div>
+                    </div>
+
                     <div className="flex flex-col h-1/2">
                         <div className="overflow-y-auto pr-2 flex-1">
                             <TopTracks top_tracks={data.top_tracks} />

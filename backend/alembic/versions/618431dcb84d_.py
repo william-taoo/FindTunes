@@ -1,8 +1,8 @@
 """empty message
 
-Revision ID: 6e5f83b77a80
-Revises: 9a06f09d2e9b
-Create Date: 2025-07-14 00:24:37.344077
+Revision ID: 618431dcb84d
+Revises: bb342d3d5218
+Create Date: 2025-07-21 22:22:06.883322
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '6e5f83b77a80'
-down_revision: Union[str, Sequence[str], None] = '9a06f09d2e9b'
+revision: str = '618431dcb84d'
+down_revision: Union[str, Sequence[str], None] = 'bb342d3d5218'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -45,8 +45,9 @@ def upgrade() -> None:
     sa.Column('spotify_id', sa.String(), nullable=False),
     sa.Column('playlist_id', sa.String(), nullable=False),
     sa.Column('playlist_name', sa.String(), nullable=False),
-    sa.Column('playlist_image', sa.Text(), nullable=True),
+    sa.Column('playlist_image', postgresql.ARRAY(sa.String()), nullable=True),
     sa.Column('playlist_url', sa.Text(), nullable=True),
+    sa.Column('retrieved_at', sa.TIMESTAMP(), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['spotify_id'], ['users.spotify_id'], ),
     sa.PrimaryKeyConstraint('id')
     )

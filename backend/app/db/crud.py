@@ -103,6 +103,8 @@ async def create_user_top_artists(db: AsyncSession, spotify_id: str, artists: li
 async def get_user_playlists(db: AsyncSession, spotify_id: str, limit: Optional[int] = None) -> list[schemas.Playlist]:
     query = select(models.UserPlaylists).where(
         models.UserPlaylists.spotify_id == spotify_id
+    ).order_by(
+        models.UserPlaylists.retrieved_at.desc()
     )
 
     if limit:
