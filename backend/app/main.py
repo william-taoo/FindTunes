@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import spotify, profile
+from app.routers import spotify, profile, sync
 
 app = FastAPI()
 app.include_router(spotify.router)
 app.include_router(profile.router)
+app.include_router(sync.router)
 
 # CORS configuration
 app.add_middleware(

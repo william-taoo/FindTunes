@@ -1,0 +1,7 @@
+lyricsgenius
+numpy
+spotipy
+python-dotenv
+torch
+transformers
+pinecone

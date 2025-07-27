@@ -38,19 +38,26 @@ def mean_pooling(model_output, attention_mask):
     return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
 def chunk_lyrics(lyrics: str, max_words: int):
-    return [lyrics[i:i + max_words] for i in range(0, len(lyrics), max_words)]
+    words = lyrics.split()
+    return [' '.join(words[i:i + max_words]) for i in range(0, len(words), max_words)]
 
 def get_song_embedding(lyrics: str):
+    if not lyrics.strip():
+        return None
+
     chunks = chunk_lyrics(lyrics, max_words=500) # Set a little below 512 words -> 384 tokens
     embeddings = []
 
     for chunk in chunks:
+        if not chunk.strip():
+            continue
         encoded_input = tokenizer(chunk, max_length=384, padding=True, truncation=True, return_tensors='pt')
         with torch.no_grad():
             model_output = model(**encoded_input)
         chunk_embedding = mean_pooling(model_output, encoded_input['attention_mask'])
         embeddings.append(chunk_embedding[0].cpu().numpy())
 
+    if len(embeddings) == 0:
+        return None
+
     return np.mean(embeddings, axis=0)
-
-

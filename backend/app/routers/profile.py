@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import crud
 from ..db.database import get_db
@@ -6,8 +6,8 @@ from ..db.schemas import ProfileResponse
 
 router = APIRouter()
 
-@router.get('/profile', response_model=ProfileResponse)
-async def get_profile(request: Request, spotify_id: str, db: AsyncSession = Depends(get_db)):
+@router.get('/profile/{spotify_id}', response_model=ProfileResponse)
+async def get_profile(spotify_id: str, db: AsyncSession = Depends(get_db)):
     print("Spotify ID from cookies:", spotify_id)
 
     if not spotify_id:

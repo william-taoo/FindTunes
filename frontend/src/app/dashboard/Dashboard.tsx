@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import axios from 'axios';
 import ProfileCard from './components/ProfileCard';
 import TopArtists from './components/TopArtists';
 import TopTracks from './components/TopTracks';
@@ -49,10 +50,11 @@ export interface SpotifyUser {
   playlists: Playlist[];
 }
 
-export default function Profile() {
+const Dashboard = () => {
     const [data, setData] = useState<SpotifyUser | null>(null);
     const [loading, setLoading] = useState(true); // Initialize as loading
 
+    // Fetch user profile data from the backend
     useEffect(() => {
         const fetchData = async () => {
             try {
@@ -62,8 +64,12 @@ export default function Profile() {
                     throw new Error('Spotify ID not found in localStorage');
                 }
 
-                const res = await fetch(`http://localhost:8000/profile?spotify_id=${ spotify_id }`, { credentials: 'include' });
-                setData(await res.json() as SpotifyUser);
+                const res = await axios.get<SpotifyUser>
+                (
+                    `http://localhost:8000/profile/${spotify_id}`,
+                    { withCredentials: true }
+                );
+                setData(res.data);
             } catch (error) {
                 console.error('Fetch error:', error);
             } finally {
@@ -73,6 +79,31 @@ export default function Profile() {
 
         fetchData();
     }, []);
+
+    // Sync user's top songs to Pinecone
+    useEffect(() => {
+        const syncUser = async () => {
+            if (!data?.user.spotify_id) return;
+
+            try {
+                const spotify_id = localStorage.getItem('spotify_id');
+                console.log("Fetching profile for Spotify ID:", spotify_id);
+                if (!spotify_id) {
+                    throw new Error('Spotify ID not found in localStorage');
+                }
+
+                await axios.post(`http://localhost:8000/sync/${spotify_id}`, null, 
+                    { withCredentials: true }
+                );
+            } catch (error) {
+                console.error('Error syncing user data:', error);
+            }
+        };
+
+        if (!loading && data) {
+            syncUser();
+        }
+    }, [loading, data]);
 
     if (loading) return <div className="p-8">Loading profile...</div>;
     if (!data || !data.user) return <div className="p-8">Failed to load profile</div>;
@@ -113,3 +144,5 @@ export default function Profile() {
         </div>
     );
 };
+
+export default Dashboard;
