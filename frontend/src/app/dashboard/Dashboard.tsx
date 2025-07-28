@@ -5,6 +5,7 @@ import ProfileCard from './components/ProfileCard';
 import TopArtists from './components/TopArtists';
 import TopTracks from './components/TopTracks';
 import Playlists from './components/Playlists';
+import Recommend from './components/Recommend';
 
 export interface Track {
   track_id: string;
@@ -83,18 +84,20 @@ const Dashboard = () => {
     // Sync user's top songs to Pinecone
     useEffect(() => {
         const syncUser = async () => {
-            if (!data?.user.spotify_id) return;
+            const spotify_id = data?.user.spotify_id
+            if (!spotify_id) return;
+
+            const alreadySynced = sessionStorage.getItem('alreadySynced');
+            if (alreadySynced === 'true') return;
 
             try {
-                const spotify_id = localStorage.getItem('spotify_id');
-                console.log("Fetching profile for Spotify ID:", spotify_id);
-                if (!spotify_id) {
-                    throw new Error('Spotify ID not found in localStorage');
-                }
+                console.log("Spotify ID from data:", spotify_id);
 
                 await axios.post(`http://localhost:8000/sync/${spotify_id}`, null, 
                     { withCredentials: true }
                 );
+
+                sessionStorage.setItem('alreadySynced', 'true');
             } catch (error) {
                 console.error('Error syncing user data:', error);
             }
@@ -116,7 +119,7 @@ const Dashboard = () => {
                 </div>
                 
                 <div>
-                    {/* Recommendation component will go here */}
+                    <Recommend />
                 </div>
             </div>
 

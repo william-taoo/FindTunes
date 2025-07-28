@@ -1,17 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timedelta
-import httpx
-import os
-from dotenv import load_dotenv
 from ..db.database import get_db
 from ..db import crud
-from typing import Any
-import base64
 from services.genius import process_artist_songs, process_song
 
-load_dotenv()
 router = APIRouter()
 
 @router.post('/sync/{spotify_id}')

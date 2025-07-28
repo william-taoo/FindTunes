@@ -1,16 +1,17 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import spotify, profile, sync
+from app.routers import spotify, profile, sync, recommend
 
 app = FastAPI()
 app.include_router(spotify.router)
 app.include_router(profile.router)
 app.include_router(sync.router)
+app.include_router(recommend.router)
 
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"], # Your Next.js frontend
+    allow_origins=["http://localhost:3000"], # Next.js frontend
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -18,7 +19,7 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    return {"message": "Spotify Auth API is running"}
+    return {"message": "Backend is running"}
 
 if __name__ == "__main__":
     import uvicorn

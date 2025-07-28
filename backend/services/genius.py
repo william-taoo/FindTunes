@@ -24,8 +24,8 @@ def to_ascii_id(s: str) -> str:
     ascii_str = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii')
     return ascii_str
 
-def get_spotify_track_id(song_name: str, artist_name: str):
-    query = f"track:{song_name} artist:{artist_name}"
+def get_spotify_track_info(song_name: str, artist_name: str):
+    query = f"{song_name} {artist_name}"
     results = sp.search(q=query, type='track', limit=1)
     
     items = results['tracks']['items']
@@ -34,7 +34,8 @@ def get_spotify_track_id(song_name: str, artist_name: str):
         info = {
             "name": track["name"],
             "artists": [song["name"] for song in track["artists"]],
-            "url": track["external_urls"]["spotify"]
+            "spotify_track_id": track["id"],
+            "spotify_track_url": track["external_urls"]["spotify"]
         }
         return info
     
@@ -57,12 +58,13 @@ def embed_and_store(song, artist_name: str):
         print("There was a problem trying to get lyrics for ", song.title)
         return
 
+    dim = 768
     if annotation_embedding is None:
-        combined_embedding = lyrics_embedding
+        annotation_embedding = np.zeros(dim)
     elif lyrics_embedding is None:
-        combined_embedding = annotation_embedding
-    else:
-        combined_embedding = np.concatenate((annotation_embedding, lyrics_embedding))
+        lyrics_embedding = np.zeros(dim)
+    
+    combined_embedding = np.concatenate((annotation_embedding, lyrics_embedding))
 
     # Normalize the combined embedding
     norm = np.linalg.norm(combined_embedding)
@@ -73,21 +75,20 @@ def embed_and_store(song, artist_name: str):
     combined_embedding = combined_embedding / norm
     # print(combined_embedding)
 
-    # Clean up artist name or song title
-    artist_name = to_ascii_id(artist_name)
+    # Clean up song title
     song_title = to_ascii_id(song.title)
     song_title_with_featured = to_ascii_id(song.title_with_featured)
 
     # Search for song's Spotify URL (if applicable)
-    song_info = get_spotify_track_id(song_title, artist_name)
+    song_info = get_spotify_track_info(song_title, artist_name)
 
     # Store metadata
-    id = f"{artist_name}_{song_title}_{song.id}" # song.id is the genius song ID
+    id = str(song.id) # Genius ID
     metadata = {
         'artist': song_info['artists'] if song_info else artist_name,
         'title': song_info['name'] if song_info else song_title_with_featured,
-        'genius_id': song.id,
-        'spotify_url': song_info['url'] if song_info else "Couldn't find Spotify URL",
+        'spotify_track_id': song_info['spotify_track_id'] if song_info else "Couldn't find Spotify ID",
+        'spotify_track_url': song_info['spotify_track_url'] if song_info else "Couldn't find Spotify URL",
     }
 
     # Store in Pinecone 
@@ -96,32 +97,37 @@ def embed_and_store(song, artist_name: str):
 def process_artist_songs(artist):
     try:
         artist = genius.search_artist(artist, max_songs=1, sort="popularity")
+        if artist is None:
+            print(f"Artist not found or no songs available.", artist)
+            return
     except Exception as e:
-        print("Artist not found or no songs available.", e)
+        print(f"Error during genius artist search: ${ artist }", e)
         return
 
     for song in artist.songs:
         # Look if the song is already in the database
-        in_database = fetch_vector(artist.name, song.title, song.id)
+        artist_name = to_ascii_id(artist.name)
+        song_title = to_ascii_id(song.title)
+        in_database = fetch_vector(song.id)
         if in_database:
             continue
 
-        embed_and_store(song, artist.name)
+        embed_and_store(song, artist_name)
         print("next song\n")
     
 def process_song(song_name: str, artist_name: str):
     try:
         song = genius.search_song(title=song_name, artist=artist_name)
+        if song is None:
+            return
     except Exception as e:
         print("Song not found or no lyrics available.", e)
         return
     
     # Look if the song is already in the database
-    in_database = fetch_vector(song.primary_artist.name, song.title, song.id)
+    in_database = fetch_vector(song.id)
     if in_database:
         return
     
-    embed_and_store(song, song.primary_artist.name)
-
-# process_artist_songs("Lil Uzi Vert")
-# process_song("The Way Life Goes (feat. Oh Wonder)", "Lil Uzi Vert")
+    artist_name = to_ascii_id(song.primary_artist.name)
+    embed_and_store(song, artist_name)

@@ -123,22 +123,10 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
         )
         playlists = playlists_response.json().get('items', []) if playlists_response.status_code == 200 else []
 
-        user_top_tracks = await crud.get_user_top_tracks(db, user_data['id'])
-        user_top_artists = await crud.get_user_top_artists(db, user_data['id'])
-        user_playlists = await crud.get_user_playlists(db, user_data['id'])
-
-        # Check if the top tracks and artists already exist in the database
-        existing_track_ids = {track.track_id for track in user_top_tracks}
-        existing_artist_ids = {artist.artist_id for artist in user_top_artists}
-        existing_playlist_ids = {playlist.playlist_id for playlist in user_playlists}
-
         # Store this information in the database
         if top_tracks:
             tracks_to_store = []
             for track in top_tracks:
-                if track['id'] in existing_track_ids:
-                    # Don't include track in database
-                    continue
                 tracks_to_store.append({
                     'spotify_id': user_data['id'],
                     'track_id': track['id'],
@@ -158,9 +146,6 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
         if top_artists:
             artists_to_store = []
             for artist in top_artists:
-                if artist['id'] in existing_artist_ids:
-                    # Don't include artist in database
-                    continue
                 artists_to_store.append({
                     'spotify_id': user_data['id'],
                     'artist_id': artist['id'],
@@ -177,9 +162,6 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
         if playlists:
             playlists_to_store = []
             for playlist in playlists:
-                if playlist['id'] in existing_playlist_ids:
-                    # Don't include playlist in database
-                    continue
                 playlists_to_store.append({
                     'spotify_id': user_data['id'],
                     'playlist_id': playlist['id'],
