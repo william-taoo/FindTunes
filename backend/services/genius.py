@@ -96,7 +96,7 @@ def embed_and_store(song, artist_name: str):
 
 def process_artist_songs(artist):
     try:
-        artist = genius.search_artist(artist, max_songs=1, sort="popularity")
+        artist = genius.search_artist(artist, max_songs=5, sort="popularity")
         if artist is None:
             print(f"Artist not found or no songs available.", artist)
             return
@@ -131,3 +131,5 @@ def process_song(song_name: str, artist_name: str):
     
     artist_name = to_ascii_id(song.primary_artist.name)
     embed_and_store(song, artist_name)
+
+    return song.id

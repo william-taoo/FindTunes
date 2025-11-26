@@ -118,7 +118,7 @@ const Dashboard = () => {
                     <ProfileCard user={data.user} />
                 </div>
                 
-                <div>
+                <div className="flex justify-center">
                     <Recommend />
                 </div>
             </div>

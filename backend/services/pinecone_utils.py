@@ -34,32 +34,41 @@ def fetch_vector(genius_id: str) -> bool:
     
     return False
 
-def query_vector(spotify_track_id: str, song_name: str, artist_name: str):
+def query_vector(genius_id: int, song_name: str, artist_name: str):
     from .genius import process_song
     try:
         similar_songs = index.query(
-            top_k = TOP_K,
+            id=str(genius_id),
+            top_k = TOP_K + 1,
             namespace=NAMESPACE,
-            include_values=True,
-            filter={ 'spotify_track_id': { '$eq': spotify_track_id } }
+            include_metadata=True,
+            include_values=False,
         )
 
         if not similar_songs.matches:
             # Need to embed that song and add it to the database
-            print(f"Song not found in database: { spotify_track_id }")
+            print(f"Song not found in database: { song_name } by { artist_name }")
             print("Embedding song...")
             process_song(song_name, artist_name)
 
             # Query for song again
             similar_songs = index.query(
-                top_k = TOP_K,
+                id=str(genius_id),
+                top_k = TOP_K + 1,
                 namespace=NAMESPACE,
-                include_values=True,
-                filter={ 'spotify_track_id': { '$eq': spotify_track_id } }
+                include_metadata=True,
+                include_values=False,
             )
 
     except Exception as e:
-        print(f"Error during query for Spotify TrackID: { spotify_track_id }, { e }")
-        return []
+        print(f"Error during query for: { song_name } by { artist_name }, { e }")
+        return -1
 
-    return similar_songs.matches
+    return [
+        {
+            "id": match.id,
+            "score": match.score,
+            "metadata": match.metadata,
+        }
+        for match in similar_songs.matches[1:]
+    ]
