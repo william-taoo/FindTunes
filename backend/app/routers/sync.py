@@ -38,4 +38,4 @@ async def sync_songs_to_db(spotify_id: str,
     top_tracks = profile_data['top_tracks']
 
     # Schedule background job
-    # background_tasks.add_task(run_sync_job, top_artists, top_tracks)
+    background_tasks.add_task(run_sync_job, top_artists, top_tracks)

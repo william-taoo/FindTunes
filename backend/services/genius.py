@@ -18,6 +18,7 @@ sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
     client_id=spotify_client_id,
     client_secret=spotify_client_secret
 ))
+MAX_SONGS=100
 
 def to_ascii_id(s: str) -> str:
     # Normalize to NFKD and encode to ASCII (removes fancy punctuation)
@@ -96,7 +97,7 @@ def embed_and_store(song, artist_name: str):
 
 def process_artist_songs(artist):
     try:
-        artist = genius.search_artist(artist, max_songs=5, sort="popularity")
+        artist = genius.search_artist(artist, max_songs=MAX_SONGS, sort="popularity")
         if artist is None:
             print(f"Artist not found or no songs available.", artist)
             return
