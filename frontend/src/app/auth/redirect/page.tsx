@@ -3,6 +3,8 @@
 import { useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
+const DOMAIN = process.env.NEXT_PUBLIC_DOMAIN || 'http://localhost:8000';
+
 const AuthRedirectPage = () => {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -18,7 +20,7 @@ const AuthRedirectPage = () => {
 
         const fetchToken = async () => {
             try {
-                const res = await fetch('http://localhost:8000/token', {
+                const res = await fetch(`${DOMAIN}/token`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ code }),

@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 
+const DOMAIN = process.env.NEXT_PUBLIC_DOMAIN || 'http://localhost:8000';
+
 const Recommend = ({ selectedTrack }: { selectedTrack?: { id: string, name: string, artist: string } }) => {
     const [songName, setSongName] = useState("");
     const [artistName, setArtistName] = useState("");
@@ -24,7 +26,7 @@ const Recommend = ({ selectedTrack }: { selectedTrack?: { id: string, name: stri
         setRecommendations([]);
 
         try {
-            const res = await axios.get(`http://localhost:8000/recommend`, {
+            const res = await axios.get(`${DOMAIN}/recommend`, {
                 params: {
                     song_name: songName,
                     artist_name: artistName,

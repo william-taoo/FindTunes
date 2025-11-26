@@ -51,6 +51,8 @@ export interface SpotifyUser {
   playlists: Playlist[];
 }
 
+const DOMAIN = process.env.NEXT_PUBLIC_DOMAIN || 'http://localhost:8000';
+
 const Dashboard = () => {
     const [data, setData] = useState<SpotifyUser | null>(null);
     const [loading, setLoading] = useState(true); // Initialize as loading
@@ -67,7 +69,7 @@ const Dashboard = () => {
 
                 const res = await axios.get<SpotifyUser>
                 (
-                    `http://localhost:8000/profile/${spotify_id}`,
+                    `${DOMAIN}/profile/${spotify_id}`,
                     { withCredentials: true }
                 );
                 setData(res.data);
@@ -93,7 +95,7 @@ const Dashboard = () => {
             try {
                 console.log("Spotify ID from data:", spotify_id);
 
-                await axios.post(`http://localhost:8000/sync/${spotify_id}`, null, 
+                await axios.post(`${DOMAIN}/sync/${spotify_id}`, null, 
                     { withCredentials: true }
                 );
 
