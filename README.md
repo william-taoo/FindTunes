@@ -7,6 +7,8 @@ and stores them in Pinecone, a vector database that can perform semantic search 
 Upon login, a user's top tracks and their top artists' catalogs are automatically processed and uploaded to the vector database.
 Share this with friends so more tracks can be added to the database for greater and more diverse recommendations!  
 
+Access at findtunes.space!
+
 # Requirements
 
 This app uses the following technologies:
