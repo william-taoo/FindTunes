@@ -17,4 +17,3 @@ This app uses the following technologies:
 * `PostgreSQL` – Database for storing user's listening history and profile data
 * `Pinecone` – Vector database for storing song lyric embeddings and performing semantic search
 * `Hugging Face` – The AI platform used to select the `all-mpnet-base-v2` model for lyric embeddings
-* `PyTorch` – Machine Learning framework used to aid in embedding process
