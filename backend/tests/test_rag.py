@@ -28,6 +28,21 @@ def song(song_id=1):
 
 
 class RagTests(unittest.TestCase):
+    def test_api_allows_title_only_and_ingests_resolved_artist(self):
+        client = Mock()
+        client.search_song.return_value = song()
+        with patch.object(route, 'make_genius_client', return_value=client), \
+             patch.object(route, 'query_vector', return_value=[]) as query:
+            result = route.recommend_songs(' Test ', '')
+        self.assertEqual(result, [])
+        client.search_song.assert_called_once_with(title='Test', artist='')
+        query.assert_called_once_with('1', 'Test', 'Artist')
+        with patch.object(route, 'make_genius_client') as create:
+            with self.assertRaises(route.HTTPException) as error:
+                route.recommend_songs('   ', '')
+            self.assertEqual(error.exception.status_code, 400)
+            create.assert_not_called()
+
     def test_backend_builds_citations_from_plain_prose(self):
         document = retrieval.song_to_document(song())
         rag.get_explanation_chain.cache_clear()

@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, HTTPException, Query
 from services.pinecone_utils import query_vector
-from services.lyric_retrieval import make_genius_client, song_to_document, fetch_song_document, song_id, search_song_with_retry
+from services.lyric_retrieval import make_genius_client, song_to_document, fetch_song_document, song_id, song_artist, search_song_with_retry
 from services.rag import is_configured, explain_match
 
 router = APIRouter()
@@ -9,8 +9,11 @@ logger = logging.getLogger(__name__)
 
 @router.get('/recommend')
 def recommend_songs(song_name: str = Query(min_length=1, max_length=200),
-                    artist_name: str = Query(min_length=1, max_length=200)):
+                    artist_name: str = Query(default='', max_length=200)):
     # Synchronous external libraries run in FastAPI's worker thread pool.
+    song_name, artist_name = song_name.strip(), artist_name.strip()
+    if not song_name:
+        raise HTTPException(400, 'Enter a song title to get recommendations.')
     try:
         client = make_genius_client()
         song = search_song_with_retry(client, song_name, artist_name)
@@ -19,13 +22,15 @@ def recommend_songs(song_name: str = Query(min_length=1, max_length=200),
         raise HTTPException(502, 'Could not retrieve the input song')
     if song is None:
         raise HTTPException(404, 'Genius could not resolve this song after two attempts. Check the title and artist, or try again shortly. Your Pinecone records have not been removed.')
-    matches = query_vector(song_id(song), song_name, artist_name)
+    resolved = {'id': song_id(song), 'title': song.title, 'artist': song_artist(song)}
+    # Ingestion must use the resolved identity when the user omits the artist.
+    matches = query_vector(resolved['id'], resolved['title'], resolved['artist'])
     if matches == -1:
         raise HTTPException(502, 'Song similarity search failed')
     seed = song_to_document(song)
     results = []
     for match in matches:
-        result = {**match, 'explanation': None,
+        result = {**match, 'seed_song': resolved, 'explanation': None,
                   'explanation_status': 'unavailable', 'sources': None}
         if not is_configured():
             result['explanation_status'] = 'disabled'
@@ -41,3 +46,14 @@ def recommend_songs(song_name: str = Query(min_length=1, max_length=200),
                 logger.exception('Explanation failed for song %s', match['id'])
         results.append(result)
     return results
+
+@router.get('/artwork')
+def artwork(song_name: str = Query(default='', max_length=200),
+            artist_name: str = Query(default='', max_length=200),
+            spotify_track_id: str = Query(default='', max_length=100)):
+    from services.artwork import song_artwork
+    try:
+        return {'image_url': song_artwork(song_name.strip(), artist_name.strip(), spotify_track_id.strip())}
+    except Exception:
+        logger.warning('Cover artwork unavailable for %s', song_name)
+        return {'image_url': None}

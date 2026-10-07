@@ -1,34 +1,11 @@
-import { Artist } from '../Dashboard';
+import { useState } from 'react';
+import type { Artist } from '../Dashboard';
 
-interface TopArtistsProps {
-    top_artists: Artist[];
+export default function TopArtists({ top_artists }: { top_artists: Artist[] }) {
+    const [expanded, setExpanded] = useState(false);
+    return <section>
+        <div className="ft-section-heading"><div><p className="ft-eyebrow">THE VOICES YOU COME BACK TO</p><h2>Your artists</h2></div>{top_artists.length > 6 && <button className="ft-text-button" onClick={() => setExpanded(!expanded)}>{expanded ? 'Show less' : 'See all'}</button>}</div>
+        <div className="ft-artist-grid">{(expanded ? top_artists : top_artists.slice(0, 6)).map((artist, i) => <a key={`${artist.artist_id}-${i}`} className="ft-artist-card" href={artist.artist_url} target="_blank" rel="noopener noreferrer"><img src={artist.images?.[0] || '/no-picture.png'} alt="" loading="lazy" /><strong>{artist.artist_name}</strong><span>Artist</span></a>)}</div>
+        {!top_artists.length && <p className="ft-muted">Your favorite artists will appear here.</p>}
+    </section>;
 }
-
-const TopArtists = ({ top_artists }: TopArtistsProps) => {
-    return (
-        <div className="bg-spotify-black p-6 rounded-lg">
-            <h2 className="text-xl font-bold mb-4">Top Artists</h2>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                {top_artists?.map(artist => (
-                <div key={artist.artist_id} className="text-center">
-                    <img 
-                        src={artist.images?.[0]} 
-                        alt={artist.artist_name}
-                        className="w-full aspect-square rounded-full object-cover mb-2 mx-auto"
-                    />
-                    <a 
-                        href={artist.artist_url || '#'} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="font-medium truncate text-green-400 hover:underline"
-                    >
-                        {artist.artist_name}
-                    </a>
-                </div>
-                ))}
-            </div>
-        </div>
-    );
-};
-
-export default TopArtists;
