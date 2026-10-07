@@ -4,9 +4,12 @@ lyricsgenius
 numpy
 spotipy
 python-dotenv
-transformers
+transformers>=4.56,<5
 pinecone
-sqlalchemy
+sqlalchemy[asyncio]
 alembic
 httpx
 asyncpg
+torch
+langchain-core>=0.3,<2
+huggingface-hub>=0.30,<1

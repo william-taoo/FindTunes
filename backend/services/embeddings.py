@@ -1,9 +1,11 @@
 import re
 from transformers import AutoTokenizer, AutoModel
 import numpy as np
+import torch
 
 tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/all-mpnet-base-v2')
 model = AutoModel.from_pretrained('sentence-transformers/all-mpnet-base-v2')
+model.eval()
 
 def clean_lyrics(text: str) -> str:
     # Remove section titles like [Chorus], [Verse 1], etc.
@@ -33,8 +35,8 @@ def split_lyrics(raw_lyrics: str) -> tuple[str, str]:
 # Mean Pooling - Take attention mask into account for correct averaging
 def mean_pooling(model_output, attention_mask):
     token_embeddings = model_output[0] # First element of model_output contains all token embeddings
-    token_embeddings = np.array(token_embeddings)
-    attention_mask = np.array(attention_mask)
+    token_embeddings = token_embeddings.detach().cpu().numpy()
+    attention_mask = attention_mask.detach().cpu().numpy()
 
     # Expand attention mask from (batch, seq) → (batch, seq, hidden)
     mask_expanded = np.expand_dims(attention_mask, axis=-1)
@@ -65,9 +67,10 @@ def get_song_embedding(lyrics: str):
         if not chunk.strip():
             continue
         encoded_input = tokenizer(chunk, max_length=384, padding=True, truncation=True, return_tensors='pt')
-        model_output = model(**encoded_input)
+        with torch.no_grad():
+            model_output = model(**encoded_input)
         chunk_embedding = mean_pooling(model_output, encoded_input['attention_mask'])
-        embeddings.append(chunk_embedding[0].cpu().numpy())
+        embeddings.append(chunk_embedding[0])
 
     if len(embeddings) == 0:
         return None

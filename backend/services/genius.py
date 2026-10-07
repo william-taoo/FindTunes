@@ -7,6 +7,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from dotenv import load_dotenv
 from .embeddings import clean_lyrics, split_lyrics, get_song_embedding
 from .pinecone_utils import upsert_vector, fetch_vector
+from .lyric_retrieval import song_id, song_artist
 
 load_dotenv()
 genius_client_id = os.getenv('GENIUS_CLIENT_ACCESS_TOKEN')
@@ -84,7 +85,7 @@ def embed_and_store(song, artist_name: str):
     song_info = get_spotify_track_info(song_title, artist_name)
 
     # Store metadata
-    id = str(song.id) # Genius ID
+    id = song_id(song) # Genius ID
     metadata = {
         'artist': song_info['artists'] if song_info else artist_name,
         'title': song_info['name'] if song_info else song_title_with_featured,
@@ -109,7 +110,7 @@ def process_artist_songs(artist):
         # Look if the song is already in the database
         artist_name = to_ascii_id(artist.name)
         song_title = to_ascii_id(song.title)
-        in_database = fetch_vector(song.id)
+        in_database = fetch_vector(song_id(song))
         if in_database:
             continue
 
@@ -126,11 +127,11 @@ def process_song(song_name: str, artist_name: str):
         return
     
     # Look if the song is already in the database
-    in_database = fetch_vector(song.id)
+    in_database = fetch_vector(song_id(song))
     if in_database:
         return
     
-    artist_name = to_ascii_id(song.primary_artist.name)
+    artist_name = to_ascii_id(song_artist(song))
     embed_and_store(song, artist_name)
 
-    return song.id
+    return song_id(song)

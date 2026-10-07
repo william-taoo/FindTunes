@@ -3,3 +3,6 @@ alembic.ini
 **/__pycache__/
 *.pyc
 *.cache
+.model-cache/
+.venv/
+live-rag-result.json

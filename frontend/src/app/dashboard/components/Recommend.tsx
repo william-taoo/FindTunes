@@ -3,11 +3,36 @@ import axios from "axios";
 
 const DOMAIN = process.env.NEXT_PUBLIC_DOMAIN || 'http://localhost:8000';
 
+interface Evidence {
+    seed_line_ids: string[];
+    candidate_line_ids: string[];
+    seed_sections: string[];
+    candidate_sections: string[];
+    reason: string;
+}
+
+interface Recommendation {
+    id: string;
+    score: number;
+    metadata: { title: string; artist: string | string[]; spotify_track_url?: string };
+    explanation_status: 'complete' | 'unavailable' | 'disabled';
+    explanation: { summary: string; shared_themes: string[]; difference: string; evidence: Evidence[] } | null;
+    sources: { seed: string; candidate: string } | null;
+}
+
+function safeLink(url?: string): string | undefined {
+    if (!url) return undefined;
+    try {
+        const parsed = new URL(url);
+        return parsed.protocol === 'https:' ? parsed.href : undefined;
+    } catch { return undefined; }
+}
+
 const Recommend = ({ selectedTrack }: { selectedTrack?: { id: string, name: string, artist: string } }) => {
     const [songName, setSongName] = useState("");
     const [artistName, setArtistName] = useState("");
     const [loading, setLoading] = useState(false);
-    const [recommendations, setRecommendations] = useState<any[]>([]);
+    const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
     const [error, setError] = useState<string | null>(null);
 
     // Auto populate from top track if provided
@@ -26,17 +51,17 @@ const Recommend = ({ selectedTrack }: { selectedTrack?: { id: string, name: stri
         setRecommendations([]);
 
         try {
-            const res = await axios.get(`${DOMAIN}/recommend`, {
+            const res = await axios.get<Recommendation[]>(`${DOMAIN}/recommend`, {
                 params: {
                     song_name: songName,
                     artist_name: artistName,
                 },
             });
-            console.log(res.data)
             setRecommendations(res.data || []);
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Recommendation error:", err);
-            setError(err.response.data.detail || "Something went wrong");
+            const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
+            setError(typeof detail === 'string' ? detail : "Could not load recommendations. Please try again.");
         } finally {
             setLoading(false);
         }
@@ -67,7 +92,7 @@ const Recommend = ({ selectedTrack }: { selectedTrack?: { id: string, name: stri
                 disabled={loading}
                 className="w-full p-2 bg-blue-600 text-white rounded disabled:opacity-50"
             >
-                {loading ? "Loading..." : "Recommend"}
+                {loading ? "Finding songs and comparing lyrics..." : "Recommend"}
             </button>
 
             {error && <p className="text-red-500 mt-3">{error}</p>}
@@ -76,11 +101,11 @@ const Recommend = ({ selectedTrack }: { selectedTrack?: { id: string, name: stri
                 <div className="mt-4">
                     <h3 className="font-bold mb-2">Similar Tracks</h3>
                     <ul>
-                        {recommendations.map((rec, i) => (
-                            <li key={i} className="mb-2 flex justify-between items-center">
+                        {recommendations.map((rec) => (
+                            <li key={rec.id} className="mb-4 border-t pt-3">
                                 <div>
                                     <a
-                                        href={rec.metadata.spotify_track_url || '#'}
+                                        href={safeLink(rec.metadata.spotify_track_url)}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="text-green-400 hover:underline"
@@ -94,8 +119,38 @@ const Recommend = ({ selectedTrack }: { selectedTrack?: { id: string, name: stri
                                 </div>
 
                                 <div className="text-spotify-light">
-                                    Lyrical Similarity: {(rec.score * 100).toFixed(2)}%
+                                    Retrieval score: {rec.score.toFixed(3)}
                                 </div>
+                                {rec.explanation ? (
+                                    <div className="mt-2 space-y-2">
+                                        <p>{rec.explanation.summary}</p>
+                                        {rec.explanation.shared_themes.length > 0 && (
+                                            <p className="text-sm">Shared themes: {rec.explanation.shared_themes.join(', ')}</p>
+                                        )}
+                                        <p className="text-sm">{rec.explanation.difference}</p>
+                                        <details className="text-sm">
+                                            <summary className="cursor-pointer">Passages used for this explanation</summary>
+                                            {rec.explanation.evidence.length === 0 && <p>No strong lyrical evidence found.</p>}
+                                            {rec.explanation.evidence.map((item, index) => (
+                                                <div key={index} className="mt-2">
+                                                    <p>{item.reason}</p>
+                                                    <p>Input: {item.seed_sections.join(', ')} ({item.seed_line_ids.join(', ')})</p>
+                                                    <p>Suggestion: {item.candidate_sections.join(', ')} ({item.candidate_line_ids.join(', ')})</p>
+                                                </div>
+                                            ))}
+                                            {rec.sources && (
+                                                <div className="mt-2 flex gap-4">
+                                                    <a className="text-green-400 underline" href={safeLink(rec.sources.seed)} target="_blank" rel="noopener noreferrer">Input lyrics on Genius</a>
+                                                    <a className="text-green-400 underline" href={safeLink(rec.sources.candidate)} target="_blank" rel="noopener noreferrer">Suggested lyrics on Genius</a>
+                                                </div>
+                                            )}
+                                        </details>
+                                    </div>
+                                ) : (
+                                    <p className="mt-2 text-sm text-gray-400">
+                                        {rec.explanation_status === 'disabled' ? 'Lyric explanations are not enabled yet.' : 'Lyric explanation unavailable for this song.'}
+                                    </p>
+                                )}
                             </li>
                             
                         ))}

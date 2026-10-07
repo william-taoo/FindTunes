@@ -1,5 +1,6 @@
 import pinecone
 import os
+import time
 from dotenv import load_dotenv
 
 NAMESPACE = 'findtunes'
@@ -34,9 +35,25 @@ def fetch_vector(genius_id: str) -> bool:
     
     return False
 
+
+def wait_for_vector(genius_id):
+    # Acknowledged writes can take a few seconds to become visible to reads.
+    for delay in (0, 0.25, 0.5, 1, 2, 4):
+        if delay:
+            time.sleep(delay)
+        if fetch_vector(str(genius_id)):
+            return True
+    return False
+
 def query_vector(genius_id: int, song_name: str, artist_name: str):
     from .genius import process_song
     try:
+        if not fetch_vector(str(genius_id)):
+            indexed_id = process_song(song_name, artist_name)
+            if indexed_id is not None and str(indexed_id) != str(genius_id):
+                raise ValueError('Ingestion resolved a different Genius song ID')
+            if not wait_for_vector(genius_id):
+                raise ValueError('Input song is not visible in Pinecone yet; please retry shortly')
         similar_songs = index.query(
             id=str(genius_id),
             top_k = TOP_K + 1,
@@ -44,21 +61,6 @@ def query_vector(genius_id: int, song_name: str, artist_name: str):
             include_metadata=True,
             include_values=False,
         )
-
-        if not similar_songs.matches:
-            # Need to embed that song and add it to the database
-            print(f"Song not found in database: { song_name } by { artist_name }")
-            print("Embedding song...")
-            process_song(song_name, artist_name)
-
-            # Query for song again
-            similar_songs = index.query(
-                id=str(genius_id),
-                top_k = TOP_K + 1,
-                namespace=NAMESPACE,
-                include_metadata=True,
-                include_values=False,
-            )
 
     except Exception as e:
         print(f"Error during query for: { song_name } by { artist_name }, { e }")
@@ -70,5 +72,6 @@ def query_vector(genius_id: int, song_name: str, artist_name: str):
             "score": match.score,
             "metadata": match.metadata,
         }
-        for match in similar_songs.matches[1:]
-    ]
+        for match in similar_songs.matches
+        if str(match.id) != str(genius_id)
+    ][:TOP_K]
