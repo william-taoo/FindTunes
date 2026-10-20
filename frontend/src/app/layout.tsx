@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "FindTunes",
-  description: "App that recommends hand-picked songs from a Spotify user and utilizes their top artists, tracks, and playlists.",
+  description: "Discover songs connected by lyrics. Explore your Spotify favorites, lyrical similarities, and the stories behind your next favorite song.",
 };
 
 export default function RootLayout({
