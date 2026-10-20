@@ -6,3 +6,4 @@ alembic.ini
 .model-cache/
 .venv/
 live-rag-result.json
+.research-traces/

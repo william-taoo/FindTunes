@@ -3,6 +3,8 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from threading import Lock
+from contextlib import contextmanager
+import time
 
 DEFAULT_MODEL = 'Qwen/Qwen3-0.6B'
 MODEL_CACHE = Path(__file__).resolve().parents[1] / '.model-cache' / 'huggingface'
@@ -41,11 +43,24 @@ def load_model():
     return tokenizer, model
 
 
-def generate_local(prompt):
+@contextmanager
+def generation_lock(deadline=None):
+    acquired = _lock.acquire() if deadline is None else _lock.acquire(timeout=max(0, deadline - time.monotonic()))
+    if not acquired:
+        raise TimeoutError('Local inference queue deadline exceeded')
+    try:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError('Local inference deadline exceeded')
+        yield
+    finally:
+        _lock.release()
+
+
+def generate_local(prompt, deadline=None, max_new_tokens=512, max_seconds=45):
     import torch
 
     # Serialize loading and generation to bound RAM usage across requests.
-    with _lock:
+    with generation_lock(deadline):
         tokenizer, model = load_model()
         roles = {'system': 'system', 'human': 'user', 'ai': 'assistant'}
         messages = [{'role': roles[message.type], 'content': message.content}
@@ -54,11 +69,21 @@ def generate_local(prompt):
             messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
         inputs = tokenizer(text, return_tensors='pt', truncation=False).to(model.device)
         input_length = inputs['input_ids'].shape[-1]
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError('Local inference deadline exceeded during model loading')
         if input_length > 4096:
             raise ValueError('Lyric comparison exceeds the local input token budget')
+        stopping = {}
+        if deadline is not None:
+            from transformers import StoppingCriteria, StoppingCriteriaList
+            class Deadline(StoppingCriteria):
+                def __call__(self, input_ids, scores, **kwargs):
+                    return time.monotonic() >= deadline
+            stopping['stopping_criteria'] = StoppingCriteriaList([Deadline()])
         with torch.inference_mode():
             output = model.generate(
-                **inputs, max_new_tokens=512, max_time=45,
+                **inputs, max_new_tokens=max_new_tokens, max_time=min(max_seconds, max(.1, deadline - time.monotonic())) if deadline else max_seconds,
+                **stopping,
                 do_sample=True, temperature=0.7, top_p=0.8, top_k=20,
                 repetition_penalty=1.1, pad_token_id=tokenizer.eos_token_id)
         return tokenizer.decode(output[0][input_length:], skip_special_tokens=True).strip()

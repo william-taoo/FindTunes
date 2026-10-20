@@ -32,7 +32,7 @@ def is_configured():
 
 
 @lru_cache(maxsize=1)
-def get_explanation_chain():
+def get_explanation_chain(deadline=None):
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import StrOutputParser
     from langchain_core.runnables import RunnableLambda
@@ -51,7 +51,8 @@ Difference: one supported difference, or none clear.
 Do not generate citations or line IDs; the application attaches them.'''),
         ('human', 'Input song passage:\n{seed}\n\nRecommended passage:\n{candidate}'),
     ])
-    return prompt | RunnableLambda(generate_local) | StrOutputParser()
+    generation = generate_local if deadline is None else lambda value: generate_local(value, deadline=deadline)
+    return prompt | RunnableLambda(generation) | StrOutputParser()
 
 
 def parse_prose(text):
@@ -91,7 +92,7 @@ def validate_and_enrich(result, seed, candidate):
     return data
 
 
-def explain_match(seed, candidate):
+def explain_match(seed, candidate, deadline=None):
     documents = {'seed': json.dumps(seed, ensure_ascii=False),
                  'candidate': json.dumps(candidate, ensure_ascii=False)}
     # Reject oversized documents rather than silently discarding evidence.
@@ -100,7 +101,8 @@ def explain_match(seed, candidate):
     seed_passage, candidate_passage = select_passages(seed, candidate)
     context = {'seed': json.dumps({'title': seed['title'], 'lines': seed_passage}),
                'candidate': json.dumps({'title': candidate['title'], 'lines': candidate_passage})}
-    summary, themes, difference = parse_prose(get_explanation_chain().invoke(context))
+    chain = get_explanation_chain() if deadline is None else get_explanation_chain(deadline)
+    summary, themes, difference = parse_prose(chain.invoke(context))
     result = SongExplanation(summary=summary, shared_themes=themes, difference=difference,
         evidence=[Evidence(seed_line_ids=[line['id'] for line in seed_passage],
                            candidate_line_ids=[line['id'] for line in candidate_passage],

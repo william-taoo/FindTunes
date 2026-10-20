@@ -36,3 +36,51 @@ def select_passages(seed, candidate):
             if score > best[0]:
                 best = (score, i, j)
     return seed_groups[best[1]], candidate_groups[best[2]]
+
+
+def representative_passages(document, max_passages=4, max_chars=2800):
+    """Scan all sections, deduplicate repetitions, then sample informative passages across the song.
+
+    This is bounded coverage, not a claim that the model read every line.
+    """
+    candidates, seen = [], set()
+    for group in passages(document):
+        signature = tuple(line['text'].casefold().strip() for line in group)
+        if signature not in seen and len(content_words(group)) >= 2:
+            candidates.append(group)
+            seen.add(signature)
+    if not candidates:
+        candidates = passages(document)
+    if len(candidates) <= 8 and sum(len(row['text']) + 1 for group in candidates for row in group) <= max_chars:
+        return candidates
+    chosen = []
+    count = min(max_passages, len(candidates))
+    for bucket in range(count):
+        start, end = bucket * len(candidates) // count, (bucket + 1) * len(candidates) // count
+        group = max(candidates[start:end], key=lambda rows: len(content_words(rows)))
+        chosen.append(group)
+    remaining, result = max_chars, []
+    for i, group in enumerate(chosen):
+        # Reserve room for later sections instead of consuming it all at the opening.
+        allowance = remaining // (len(chosen) - i)
+        rows = []
+        for line in group:
+            cost = len(line['text']) + 1
+            if cost <= allowance:
+                rows.append(line)
+                allowance -= cost
+                remaining -= cost
+        if rows:
+            result.append(rows)
+    return result
+
+
+def lyric_overlap(seed, candidate):
+    """A transparent, non-generative comparison across all lyric sections."""
+    left, right = content_words(seed['lines']), content_words(candidate['lines'])
+    shared = sorted(left & right, key=lambda word: (-len(word), word))[:8]
+    return {'shared_words': shared,
+            'seed_lines_scanned': len(seed['lines']), 'candidate_lines_scanned': len(candidate['lines']),
+            'seed_sections': list(dict.fromkeys(line.get('section', 'Lyrics') for line in seed['lines'])),
+            'candidate_sections': list(dict.fromkeys(line.get('section', 'Lyrics') for line in candidate['lines'])),
+            'limitation': 'Shared words are lexical overlap, not proof of a shared theme or musical feel.'}

@@ -5,6 +5,14 @@ data, Genius lyrics, and semantic search in Pinecone. Its RAG pipeline retrieves
 lyrics on demand and uses a local Qwen3-0.6B model to explain recommendations with
 passage references and source links. LLM inference requires no API key.
 
+Optional LangGraph review and artist/production research agents add sourced
+song/vibe profiles and comparisons
+in the background while recommendation cards stay available. The default shows
+source excerpts and full-song wording overlap without local inference; AI
+explanations and profiles are an explicit slower option. See
+[research setup and architecture](backend/RESEARCH.md) for provider keys,
+evidence limits, caching, traces, and offline tests.
+
 ## Requirements
 
 - Python 3.10+ and Node.js 20+ with npm.
