@@ -9,6 +9,8 @@ from ..db.database import get_db
 from ..db import crud
 from typing import Any
 import base64
+import secrets
+from ..sessions import COOKIE, TTL, issue_session, revoke_session, current_user
 
 load_dotenv()
 router = APIRouter()
@@ -33,7 +35,12 @@ async def get_spotify_user_data(access_token: str) -> dict[str, Any]:
 @router.post('/token')
 async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(get_db)):
     # Get authorization request code from frontend
-    code = (await request.json()).get('code')
+    payload = await request.json()
+    code = payload.get('code')
+    state = payload.get('state')
+    expected = request.cookies.get('spotify_auth_state')
+    if not isinstance(state, str) or not expected or not secrets.compare_digest(state, expected):
+        raise HTTPException(400, 'Sign-in session expired or invalid. Please start sign-in again.')
     if not code:
         raise HTTPException(status_code=400, detail="Authorization code missing")
     
@@ -83,15 +90,15 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
         # Prepare user data for database
         user_dict = {
             'spotify_id': user_data['id'],
-            'display_name': user_data.get('display_name', ''),
-            'email': user_data.get('email'),
-            'country': user_data.get('country', ''),
-            'profile_image_url': user_data.get('images', [{}])[0].get('url'),
+            'display_name': user_data.get('display_name') or user_data['id'],
+            'email': user_data.get('email') or f"{user_data['id']}@spotify-user.invalid",
+            'country': user_data.get('country') or '',
+            'profile_image_url': (user_data.get('images') or [{}])[0].get('url'),
             'followers_count': user_data.get('followers', {}).get('total', 0),
             'product': user_data.get('product'),
             'spotify_profile_url': user_data.get('external_urls', {}).get('spotify'),
             'access_token': access_token,
-            'refresh_token': refresh_token,
+            'refresh_token': refresh_token or '',
             'token_expires_at': expires_at,
             'raw_data': str(user_data)  # Storing as string for reference
         }
@@ -136,7 +143,7 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
                     'artist_urls': {artist['name']: artist['external_urls']['spotify'] for artist in track['artists']},
                     'album_name': track['album']['name'],
                     'images': [image['url'] for image in track['album']['images']] if track['album']['images'] else [],
-                    'popularity': track['popularity'],
+                    'popularity': track.get('popularity', 0),
                     'time_range': 'short_term',
                 })
 
@@ -152,7 +159,7 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
                     'artist_name': artist['name'],
                     'artist_url': artist['external_urls']['spotify'],
                     'genres': artist.get('genres', []),
-                    'popularity': artist['popularity'],
+                    'popularity': artist.get('popularity', 0),
                     'images': [image['url'] for image in artist['images']] if artist['images'] else []
                 })
 
@@ -162,6 +169,8 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
         if playlists:
             playlists_to_store = []
             for playlist in playlists:
+                if not playlist:
+                    continue
                 playlists_to_store.append({
                     'spotify_id': user_data['id'],
                     'playlist_id': playlist['id'],
@@ -174,5 +183,25 @@ async def exchange_spotify_token(request: Request, db: AsyncSession = Depends(ge
 
         # Set the cookie with the user's Spotify ID, and redirect to the dashboard
         response = JSONResponse(content={ 'spotify_id': user_data['id'] })
+        revoke_session(request.cookies.get(COOKIE))
+        response.set_cookie(COOKIE, issue_session(user_data['id']), httponly=True,
+            secure=os.getenv('SESSION_COOKIE_SECURE', 'false').lower() == 'true',
+            samesite='lax', max_age=TTL, path='/')
+        response.headers['Cache-Control'] = 'no-store'
+        response.delete_cookie('spotify_auth_state', path='/')
 
         return response
+
+
+@router.get('/session')
+def session(user: str = Depends(current_user)):
+    return JSONResponse({'spotify_id': user}, headers={'Cache-Control': 'no-store'})
+
+
+@router.post('/logout')
+def logout(request: Request):
+    revoke_session(request.cookies.get(COOKIE))
+    response = JSONResponse({'logged_out': True}, headers={'Cache-Control': 'no-store'})
+    response.delete_cookie(COOKIE, path='/')
+    response.delete_cookie('spotify_auth_state', path='/')
+    return response

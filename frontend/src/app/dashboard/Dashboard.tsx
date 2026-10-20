@@ -19,8 +19,9 @@ export default function Dashboard() {
     useEffect(()=>{
         const fetchData = async()=>{
             try {
-                const id=localStorage.getItem('spotify_id');
-                if(!id) throw new Error('Spotify ID not found in localStorage');
+                localStorage.removeItem('spotify_id');
+                const session=await axios.get<{spotify_id:string}>(`${DOMAIN}/session`,{withCredentials:true});
+                const id=session.data.spotify_id;
                 setData((await axios.get<SpotifyUser>(`${DOMAIN}/profile/${id}`,{withCredentials:true})).data);
             } catch(error) { console.error('Fetch error:',error); }
             finally { setLoading(false); }
@@ -30,8 +31,8 @@ export default function Dashboard() {
     useEffect(()=>{
         const syncUser=async()=>{
             const id=data?.user.spotify_id;
-            if(!id || sessionStorage.getItem('alreadySynced')==='true') return;
-            try { await axios.post(`${DOMAIN}/sync/${id}`,null,{withCredentials:true}); sessionStorage.setItem('alreadySynced','true'); }
+            if(!id) return;
+            try { await axios.post(`${DOMAIN}/sync/${id}`,null,{withCredentials:true}); }
             catch(error) { console.error('Error syncing user data:',error); }
         };
         if(!loading && data) void syncUser();
@@ -41,6 +42,20 @@ export default function Dashboard() {
     return <DashboardView data={data}/>;
 }
 export function DashboardView({data,initialRecommendations}:{data:SpotifyUser;initialRecommendations?:Recommendation[]}) {
+    const [leaving,setLeaving] = useState(false);
+    const [accountError,setAccountError] = useState('');
+    const leaveAccount = async (switchAccount: boolean) => {
+        setLeaving(true); setAccountError('');
+        try {
+            await axios.post(`${DOMAIN}/logout`,null,{withCredentials:true,timeout:10000});
+            localStorage.removeItem('spotify_id');
+            sessionStorage.removeItem('alreadySynced');
+            window.location.replace(switchAccount ? '/api/auth' : '/');
+        } catch {
+            setAccountError('Could not sign out. Check the backend and try again.');
+            setLeaving(false);
+        }
+    };
     const [activeSection, setActiveSection] = useState('discover');
     const scrollToSection = (id: string) => {
         document.getElementById(id)?.scrollIntoView({behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block:'start'});
@@ -77,7 +92,8 @@ export function DashboardView({data,initialRecommendations}:{data:SpotifyUser;in
             <div className="ft-sidebar-profile"><img src={data.user.profile_image_url || '/no-picture.png'} alt=""/><div><strong>{data.user.display_name}</strong><span>Spotify connected <i/></span></div></div>
         </aside>
         <main className="ft-main">
-            <header className="ft-topbar"><span>Discover / <strong>For you</strong></span><a href={data.user.spotify_profile_url} target="_blank" rel="noopener noreferrer" className="ft-account-link">Your Spotify ↗</a></header>
+            <header className="ft-topbar"><span>Discover / <strong>For you</strong></span><div className="ft-account-actions"><a href={data.user.spotify_profile_url} target="_blank" rel="noopener noreferrer" className="ft-account-link">Your Spotify ↗</a><button disabled={leaving} onClick={()=>void leaveAccount(true)}>Switch account</button><button disabled={leaving} onClick={()=>void leaveAccount(false)}>{leaving ? 'Signing out…' : 'Log out'}</button></div></header>
+            {accountError && <p role="alert">{accountError}</p>}
             <section className="ft-hero" aria-labelledby="discovery-title">
                 <div><h1 id="discovery-title">Same feeling.<br/><span>New favorite.</span></h1><p className="ft-hero-copy">Find songs that speak your language.<br/>Discover the connections hiding in the lyrics.</p></div>
                 <div className="ft-hero-art"><div className="ft-orbit" aria-hidden="true"/><div className="ft-hero-disc ft-song-disc" aria-hidden="true">{currentArtwork ? <img src={currentArtwork} alt=""/> : <span>♪</span>}</div><span className="ft-art-caption">{currentSong.name || 'Choose a song'}{currentSong.artist && <><br/>{currentSong.artist}</>}</span></div>

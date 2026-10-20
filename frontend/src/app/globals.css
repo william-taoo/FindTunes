@@ -205,6 +205,10 @@ button:not(:disabled), summary { cursor: pointer; }
 @media (max-width: 800px) { .ft-sidebar nav button { width: auto; } }
 
 .ft-sidebar-profile { margin-top: auto; flex-shrink: 0; }
+.ft-account-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 14px; }
+.ft-account-actions button { color: #c4cec5; font: inherit; background: transparent; border: 1px solid #3b463d; border-radius: 20px; padding: 7px 12px; cursor: pointer; }
+.ft-account-actions button:hover { color: #b7f7c5; border-color: #8acb99; }
+.ft-account-actions button:disabled { opacity: .5; cursor: wait; }
 .ft-sidebar nav button { font-size: 18px; font-weight: 600; padding: 14px 10px; gap: 10px; color: #b8c9bd; }
 .ft-sidebar nav button span { font-size: 24px; flex-shrink: 0; }
 .ft-sidebar nav button.ft-nav-primary { color: #c0f7c8; background: #263229; }

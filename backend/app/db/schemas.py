@@ -34,16 +34,12 @@ class Playlist(BaseModel):
 class UserResponse(BaseModel):
     spotify_id: str
     display_name: str
-    email: str
-    country: str
+    email: Optional[str] = None
+    country: Optional[str] = None
     profile_image_url: Optional[str] = None
     followers_count: int
-    product: str
+    product: Optional[str] = None
     spotify_profile_url: Optional[str] = None
-    access_token: str
-    refresh_token: str
-    token_expires_at: datetime
-    raw_data: Optional[str] = None
 
 class ProfileResponse(BaseModel):
     user: UserResponse

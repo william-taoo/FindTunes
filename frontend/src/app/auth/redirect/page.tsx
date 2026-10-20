@@ -30,7 +30,7 @@ const AuthRedirectPage = () => {
                 const res = await fetch(`${DOMAIN}/token`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ code }),
+                    body: JSON.stringify({ code, state }),
                     credentials: 'include',
                     signal: controller.signal,
                 });
@@ -44,7 +44,7 @@ const AuthRedirectPage = () => {
                 if (typeof data.spotify_id !== 'string' || !data.spotify_id) {
                     throw new Error('The backend did not return a Spotify user ID.');
                 }
-                localStorage.setItem('spotify_id', data.spotify_id);
+                localStorage.removeItem('spotify_id');
                 sessionStorage.removeItem('alreadySynced');
 
                 router.replace('/dashboard');
