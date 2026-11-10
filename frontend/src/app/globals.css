@@ -218,7 +218,13 @@ button:not(:disabled), summary { cursor: pointer; }
 @media (max-width: 800px) { .ft-sidebar nav button { font-size: 16px; padding: 10px; } }
 @media (max-width: 800px) { .ft-app-shell { padding-top: 8px; } .ft-sidebar { position: sticky; top: 8px; z-index: 10; } }
 .ft-research-details { margin-top: 28px; border-top: 1px solid #435148; padding-top: 24px; }
+.ft-detail-body > .ft-research-details:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
 .ft-research-profile { margin: 20px 0; }
+.ft-ai-observation { margin-bottom: 24px; padding: 16px; background: #b3f2bd08; border: 1px solid #b3f2bd35; border-radius: 12px; }
+.ft-ai-observation > h4 { margin: 0 0 8px; font-size: 18px; }
+.ft-ai-observation > p { line-height: 1.65; }
+.ft-card-research-status { font-size: 12px; color: #b3f2bd; margin: 0 0 12px; }
+@media (max-width: 560px) { .ft-song-card > :not(.ft-card-art) { grid-column: 2; } }
 .ft-research-profile h4 { font-size: 16px; font-weight: 650; margin: 16px 0 10px; }
 .ft-rating-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .ft-rating { background: #ffffff06; border-radius: 8px; padding: 12px; font-size: 14px; }

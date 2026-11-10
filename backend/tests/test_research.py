@@ -9,11 +9,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.research.schema import (SongIdentity, Source, Decision,
     SupportCheck, ProfileDraft, Rating, identity_matches, unknown_profile)
-from services.research.schema import ObservationSelection, ObservationChoice
+from services.research.schema import MusicalSelection, MusicalObservation, MusicalRating
 from services.research.providers import source
 from services.research.providers import HTTPResearchProvider
 from services.research.graph import build_graph, research_song
-from services.research.cache import MemoryCache
 from services.research.jobs import comparisons, JobManager
 from services.local_llm import generation_lock, _lock
 from services.research.model import LocalResearchModel
@@ -25,18 +24,13 @@ class Provider:
     def __init__(self, fail=False):
         self.calls = []
         self.fail = fail
-        self.started = 0
-        self.both_started = asyncio.Event()
+        self.queries = []
 
     def capabilities(self):
         return {'search_reviews': True, 'search_context': True}
 
     async def search(self, name):
         self.calls.append(name)
-        self.started += 1
-        if self.started >= 2:
-            self.both_started.set()
-        await asyncio.wait_for(self.both_started.wait(), 1)
         if self.fail and name == 'context':
             raise RuntimeError('Provider failed')
         return [source(f'https://example.com/{name}',
@@ -44,6 +38,7 @@ class Provider:
             'written_excerpt')]
 
     async def search_reviews(self, query):
+        self.queries.append(query)
         return await self.search('reviews')
 
     async def search_context(self, query):
@@ -52,26 +47,17 @@ class Provider:
 
 
 class Model:
-    def __init__(self, forged=False, unsupported=False):
-        self.forged = forged
-        self.unsupported = unsupported
+    def __init__(self):
+        self.calls = []
 
-    async def ask(self, schema, instruction, context, deadline):
-        if schema is Decision:
-            action = 'search' if context['round'] == 0 else 'finish'
-            return Decision(action=action, option=0, reason='Need relevant written evidence')
-        if schema is ObservationSelection:
-            if 'lyrical_emotions / lyrical_interpretation' in instruction:
-                return ObservationSelection(observations=[ObservationChoice(claim='The narrator longs for someone.', source_index=0, sentence_index=0)])
-            return ObservationSelection(observations=[ObservationChoice(claim='The reviewer describes driving drums.',
-                source_index=0, sentence_index=19 if self.forged else 0)])
-        if schema is SupportCheck:
-            return SupportCheck(supported=not self.unsupported, exact_song_version=True, reason='Evidence check')
-        if schema is ProfileDraft:
-            musical = [i for i, finding in enumerate(context['findings']) if finding['category'] == 'musical_characteristics']
-            return ProfileDraft(musical_characteristics=[Rating(label='energy', level='high',
-                explanation='Reviewers describe driving drums.', finding_ids=musical)])
-        raise AssertionError(schema)
+    async def describe_vibe(self, song, sources, deadline, reference=None):
+        self.calls.append({'song': song, 'sources': sources, 'reference': reference})
+        return ('Dreamy and relaxed, with a similarly intimate feel to your input song.' if reference else
+                'Dreamy and relaxed, with an intimate atmosphere.')
+
+    async def ask(self, *args):
+        raise AssertionError('Vibe lookup must not invoke structured extraction or support checks')
+
 
 
 class ResearchTests(unittest.IsolatedAsyncioTestCase):
@@ -81,33 +67,40 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
             {'song': SONG.model_dump(), 'document': document, 'deadline': time.monotonic()+5,
              'sources': [], 'findings': [], 'errors': []})
 
-    async def test_parallel_external_io_and_agent_tool_choice(self):
-        provider = Provider()
-        result = await self.run_graph(provider)
-        self.assertTrue(provider.both_started.is_set())
-        self.assertEqual(provider.calls.count('context'), 1)
-        self.assertEqual(provider.calls.count('reviews'), 1)
-        self.assertTrue(all(item['kind'] == 'written_excerpt' for item in result['sources']))
-        self.assertEqual(len([event for event in self.trace if event['action'] == 'decision']), 0)
-        self.assertEqual(len([event for event in self.trace if event['action'] == 'evidence_ready']), 2)
-        self.assertEqual(result['profile']['musical_characteristics'][0]['level'], 'high')
+    async def test_one_search_and_one_plain_vibe_summary_without_checks(self):
+        provider, model = Provider(), Model()
+        result = await self.run_graph(provider, model)
+        self.assertEqual(provider.calls, ['reviews'])
+        self.assertEqual(len(model.calls), 1)
+        self.assertEqual(result['outcome'], 'vibe_ready')
+        self.assertIn('Dreamy', result['vibe'])
+        self.assertEqual(result['findings'], [])
+        self.assertEqual(result['profile'], unknown_profile())
+        self.assertFalse(any(event['action'] in ('validate_claim', 'validate_rating', 'decision') for event in self.trace))
 
-    async def test_partial_failure_preserves_other_agent(self):
-        result = await self.run_graph(Provider(fail=True))
-        self.assertTrue(result['findings'])
-        self.assertTrue(any(error['agent'] == 'context' for error in result['errors']))
+
+    async def test_failed_search_stops_without_model_calls(self):
+        provider = Provider()
+        provider.search_reviews = AsyncMock(side_effect=RuntimeError('Provider failed'))
+        model = Mock()
+        model.ask = AsyncMock(side_effect=AssertionError('No evidence'))
+        result = await self.run_graph(provider, model)
+        provider.search_reviews.assert_awaited_once()
+        model.ask.assert_not_awaited()
+        self.assertEqual(result['findings'], [])
+        self.assertEqual(result['errors'][0]['code'], 'RuntimeError')
+        self.assertEqual(result['outcome'], 'search_failed')
+        self.assertEqual(result['outcome_reason'], 'search_error')
 
     async def test_inference_timeout_does_not_discard_retrieved_sources(self):
         class TimeoutModel(Model):
-            async def ask(self, schema, instruction, context, deadline):
-                if schema is ObservationSelection:
-                    raise TimeoutError('Simulated model queue timeout')
-                return await super().ask(schema, instruction, context, deadline)
+            async def describe_vibe(self, *args, **kwargs):
+                raise TimeoutError('Model unavailable')
         result = await self.run_graph(model=TimeoutModel())
-        self.assertEqual(len(result['sources']), 2)
-        self.assertEqual(result['findings'], [])
-        self.assertTrue(any(error['code'] == 'TimeoutError' for error in result['errors']))
-        self.assertEqual(len([event for event in self.trace if event['action'] == 'evidence_ready']), 2)
+        self.assertEqual(len(result['sources']), 1)
+        self.assertEqual(result['outcome'], 'analysis_failed')
+        self.assertEqual(result['outcome_reason'], 'timeout')
+
 
     async def test_quick_graph_never_calls_model_and_exposes_excerpts(self):
         class NoModel:
@@ -116,70 +109,99 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
         result = await build_graph(provider, NoModel(), mode='quick').ainvoke({
             'song': SONG.model_dump(), 'document': None, 'deadline': time.monotonic()+5,
             'sources': [], 'findings': [], 'errors': []})
-        self.assertEqual(sorted(provider.calls), ['context', 'reviews'])
+        self.assertEqual(provider.calls, ['reviews'])
         self.assertEqual(result['findings'], [])
         self.assertTrue(all(not item['identity_verified'] for item in result['sources']))
-        self.assertEqual({item['research_role'] for item in result['sources']}, {'reviews', 'context'})
+        self.assertEqual({item['research_role'] for item in result['sources']}, {'music'})
+        self.assertEqual(result['outcome'], 'sources_only')
 
-    async def test_quick_and_deep_caches_are_separate(self):
-        cache, provider = MemoryCache(), Provider()
-        quick = await research_song(SONG, None, provider, Model(), cache, time.monotonic()+5, lambda **event: None, mode='quick')
-        count = len(provider.calls)
-        deep = await research_song(SONG, None, provider, Model(), cache, time.monotonic()+5, lambda **event: None, mode='deep')
-        self.assertFalse(deep['cached'])
-        self.assertGreater(len(provider.calls), count)
-        self.assertEqual(quick['mode'], 'quick')
+    async def test_each_request_researches_fresh_without_cache(self):
+        provider = Provider()
+        for mode in ('quick', 'deep', 'deep'):
+            result = await research_song(SONG, None, provider, Model(), time.monotonic()+5,
+                                         lambda **event: None, mode=mode)
+            self.assertFalse(result['cached'])
+            self.assertEqual(result['mode'], mode)
+        self.assertEqual(provider.calls, ['reviews'] * 3)
 
-    async def test_agent_can_retry_a_different_query_after_search_failure(self):
-        class FirstReviewFails(Provider):
+    async def test_searches_overlap_while_inference_gate_is_busy(self):
+        gate = asyncio.Semaphore(0)
+        all_searched = asyncio.Event()
+        class Parallel(Provider):
             async def search_reviews(self, query):
-                self.review_attempts = getattr(self, 'review_attempts', 0) + 1
-                values = await self.search('reviews')
-                if self.review_attempts == 1:
-                    raise RuntimeError('Search temporarily unavailable')
-                return values
-        class Retry(Model):
-            async def ask(self, schema, instruction, context, deadline):
-                if schema is Decision and 'You are the reviews' in instruction and context['round'] == 1:
-                    self.assert_errors = context['errors']
-                    return Decision(action='search', option=1, reason='Try a different review query')
-                return await super().ask(schema, instruction, context, deadline)
-        model = Retry()
-        provider = FirstReviewFails()
-        result = await self.run_graph(provider, model)
-        self.assertTrue(model.assert_errors)
-        self.assertEqual(provider.calls.count('reviews'), 2)
-        self.assertTrue(result['findings'])
+                self.calls.append('reviews')
+                if len(self.calls) == 2:
+                    all_searched.set()
+                await asyncio.wait_for(all_searched.wait(), .5)
+                return await self.search('result')
+        provider = Parallel()
+        tasks = [asyncio.create_task(research_song(SONG, None, provider, Model(),
+            time.monotonic()+2, lambda **event: None, inference_gate=gate)) for _ in range(2)]
+        try:
+            await asyncio.wait_for(all_searched.wait(), .5)
+            self.assertTrue(all(not task.done() for task in tasks))
+        finally:
+            gate.release()
+            results = await asyncio.gather(*tasks)
+        self.assertTrue(all(result['vibe'] for result in results))
 
-    async def test_roles_use_distinct_queries_and_scoped_tools(self):
-        class Capture(Model):
-            def __init__(self):
-                super().__init__()
-                self.roles = {}
-            async def ask(self, schema, instruction, context, deadline):
-                if schema is SupportCheck:
-                    return SupportCheck(supported=False, exact_song_version=True, reason='Need a more specific excerpt')
-                if schema is Decision:
-                    role = 'reviews' if 'You are the reviews' in instruction else 'context'
-                    self.roles[role] = context
-                return await super().ask(schema, instruction, context, deadline)
-        model = Capture()
-        await self.run_graph(model=model)
-        self.assertNotEqual(model.roles['reviews']['queries'], model.roles['context']['queries'])
-        self.assertIn('search', model.roles['reviews']['available'])
-        self.assertNotIn('search_context', model.roles['reviews']['available'])
-        self.assertIn('search', model.roles['context']['available'])
-        self.assertTrue(all('interview' in query or 'commentary' in query for query in model.roles['context']['queries']))
-
-    async def test_rejects_album_only_claims_and_wrong_song_evidence(self):
-        class AlbumOnly(Model):
-            async def ask(self, schema, instruction, context, deadline):
-                if schema is SupportCheck:
-                    return SupportCheck(supported=False, exact_song_version=False,
-                        reason='Album-wide evidence does not establish this track claim')
-                return await super().ask(schema, instruction, context, deadline)
-        result = await self.run_graph(model=AlbumOnly())
+    async def test_inference_gate_wait_obeys_song_deadline(self):
+        result = await research_song(SONG, None, Provider(), Model(), time.monotonic()+.5,
+                                    lambda **event: None, inference_gate=asyncio.Semaphore(0))
+        self.assertEqual(len(result['sources']), 1)
         self.assertEqual(result['findings'], [])
+        self.assertTrue(any(error['code'] == 'TimeoutError' for error in result['errors']))
+
+    async def test_empty_search_stops_without_followup_in_both_modes(self):
+        for mode in ('quick', 'deep'):
+            provider = Provider()
+            provider.search_reviews = AsyncMock(return_value=[])
+            model = Mock()
+            model.ask = AsyncMock(side_effect=AssertionError('No evidence'))
+            result = await build_graph(provider, model, mode=mode).ainvoke({
+                'song': SONG.model_dump(), 'deadline': time.monotonic()+5,
+                'sources': [], 'findings': [], 'errors': []})
+            provider.search_reviews.assert_awaited_once()
+            model.ask.assert_not_awaited()
+            self.assertEqual(result['findings'], [])
+            self.assertEqual(result['outcome'], 'no_sources')
+
+    async def test_query_looks_up_general_song_vibe(self):
+        provider = Provider()
+        await self.run_graph(provider)
+        self.assertEqual(provider.calls, ['reviews'])
+        for term in ('vibe', 'mood', 'atmosphere'):
+            self.assertIn(term, provider.queries[0])
+
+    async def test_plain_vibe_generation_uses_one_call_and_input_context(self):
+        reference = {'song': SONG.model_dump(), 'vibe': 'Mellow and atmospheric.'}
+        with patch('services.research.model.generate_local', return_value='Vibe: Dreamy, with a brighter feel than the input song.') as generation:
+            result = await LocalResearchModel().describe_vibe(SONG.model_dump(), [source(
+                'https://example.com/review', 'Test Song review', 'Airy vocals with a relaxed atmosphere.',
+                'written_excerpt')], time.monotonic()+5, reference=reference)
+        generation.assert_called_once()
+        self.assertEqual(result, 'Dreamy, with a brighter feel than the input song.')
+        messages = generation.call_args.args[0].to_messages()
+        self.assertIn('plain prose', messages[0].content)
+        self.assertIn('Mellow and atmospheric.', messages[1].content)
+
+    async def test_empty_prose_fails_once_without_repair(self):
+        with patch('services.research.model.generate_local', return_value='') as generation:
+            with self.assertRaises(ValueError):
+                await LocalResearchModel().describe_vibe(SONG.model_dump(), [], time.monotonic()+5)
+            generation.assert_called_once()
+
+    async def test_missing_input_vibe_still_allows_candidate_description(self):
+        reference = asyncio.get_running_loop().create_future()
+        reference.set_result({'song': SONG.model_dump(), 'vibe': None})
+        model = Model()
+        result = await research_song(SONG, None, Provider(), model, time.monotonic()+5,
+                                     lambda **event: None, seed_profile=reference)
+        self.assertTrue(result['vibe'])
+        self.assertFalse(result['compares_to_seed'])
+        self.assertIsNone(model.calls[0]['reference'])
+
+
 
     async def test_provider_requires_only_brave_and_filters_video_links(self):
         import httpx
@@ -193,32 +215,69 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(values), 1)
         self.assertIsNone(values[0]['timestamp_seconds'])
 
-    async def test_forged_quote_is_rejected(self):
-        result = await self.run_graph(model=Model(forged=True))
-        self.assertEqual(result['findings'], [])
-        self.assertEqual(result['profile'], unknown_profile())
 
-    async def test_real_reference_does_not_prove_support(self):
-        result = await self.run_graph(model=Model(unsupported=True))
-        self.assertEqual(result['findings'], [])
 
-    async def test_cache_reuses_research_without_io(self):
-        cache = MemoryCache()
-        provider = Provider()
-        first = await research_song(SONG, None, provider, Model(), cache, time.monotonic()+5, lambda **event: None)
-        count = len(provider.calls)
-        second = await research_song(SONG, None, provider, Model(), cache, time.monotonic()+5, lambda **event: None)
-        self.assertTrue(second['cached'])
-        self.assertEqual(count, len(provider.calls))
-        self.assertEqual(first['profile'], second['profile'])
 
-    async def test_cache_failure_is_nonfatal(self):
-        class Broken:
-            async def get(self, key): raise RuntimeError()
-            async def put(self, key, payload): raise RuntimeError()
-        result = await research_song(SONG, None, Provider(), Model(), Broken(), time.monotonic()+5, lambda **event: None)
-        self.assertTrue(result['findings'])
-        self.assertTrue(any(error['code'] == 'cache_write_failed' for error in result['errors']))
+    async def test_model_failure_preserves_sources_without_retry(self):
+        class Broken(Model):
+            async def describe_vibe(self, *args, **kwargs):
+                self.calls.append('attempt')
+                raise ValueError('Empty output')
+        model = Broken()
+        result = await self.run_graph(model=model)
+        self.assertEqual(result['outcome'], 'analysis_failed')
+        self.assertEqual(len(model.calls), 1)
+        self.assertEqual(len(result['sources']), 1)
+
+
+
+    async def test_profile_payload_exposes_vibe_without_verified_claims(self):
+        result = await research_song(SONG, None, Provider(), Model(),
+                                     time.monotonic()+5, lambda **event: None)
+        self.assertEqual(result['outcome'], 'vibe_ready')
+        self.assertEqual(result['outcome_reason'], None)
+        self.assertEqual(result['vibe_basis'], 'search_excerpts')
+        self.assertFalse(result['compares_to_seed'])
+        self.assertTrue(result['sources'])
+
+
+    async def test_job_deadline_marks_search_and_analysis_failures_separately(self):
+        import services.research.jobs as jobs
+        document = {'song_id': '123', 'title': 'Test Song', 'artist': 'Test Artist'}
+        for has_sources in (False, True):
+            async def pending(song, doc, provider, model, deadline, trace, **kwargs):
+                if has_sources:
+                    trace(agent='music', action='evidence_ready', status='ok', sources=[source(
+                        'https://example.com/review', 'Test Song by Test Artist',
+                        'Test Song has driving drums.', 'written_excerpt')])
+                await asyncio.sleep(5)
+            manager = JobManager()
+            with patch.object(jobs, 'research_song', side_effect=pending), \
+                 patch.object(jobs, 'budget', return_value=.1):
+                job_id = manager.start(document, [], mode='deep')
+                await asyncio.gather(*manager.tasks)
+            job = manager.snapshot(job_id)
+            self.assertEqual(job['status'], 'partial')
+            self.assertEqual(job['seed']['outcome'], 'analysis_failed' if has_sources else 'search_failed')
+            self.assertEqual(job['seed']['outcome_reason'], 'timeout')
+            self.assertEqual(bool(job['seed']['sources']), has_sources)
+
+
+    async def test_provider_never_retries_transport_or_server_errors(self):
+        import httpx
+        for failure in ('transport', 'server'):
+            client = AsyncMock()
+            if failure == 'transport':
+                client.get.side_effect = httpx.ConnectError('Unavailable')
+            else:
+                client.get.return_value = httpx.Response(503, request=httpx.Request('GET', 'https://example.com'))
+            with patch('services.research.providers.httpx.AsyncClient') as factory:
+                factory.return_value.__aenter__ = AsyncMock(return_value=client)
+                factory.return_value.__aexit__ = AsyncMock(return_value=False)
+                with self.assertRaises(httpx.HTTPError):
+                    await HTTPResearchProvider()._get('https://example.com')
+            client.get.assert_awaited_once()
+
 
     async def test_missing_provider_has_explicit_availability(self):
         provider = Provider()
@@ -226,23 +285,16 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
         result = await self.run_graph(provider)
         self.assertEqual(provider.calls, [])
         self.assertTrue(any(error['code'] == 'provider_unavailable' for error in result['errors']))
+        self.assertEqual(result['outcome'], 'search_failed')
+        self.assertEqual(result['outcome_reason'], 'provider_unavailable')
 
-    async def test_lyrics_never_establish_sound(self):
-        document = {'source_url': 'https://genius.com/test', 'lines': [{'id': 'L1', 'section': 'Chorus', 'text': 'I wait for you every night'}]}
-        result = await self.run_graph(model=Model(forged=True), document=document)
-        self.assertTrue(any(f['category'] == 'lyrical_emotions' for f in result['findings']))
-        self.assertTrue(all(row['level'] == 'unknown' for row in result['profile']['musical_characteristics']))
-
-    async def test_invalid_tool_choice_is_bounded(self):
-        class Bad(Model):
-            async def ask(self, schema, instruction, context, deadline):
-                if schema is ObservationSelection: return ObservationSelection(observations=[])
-                if schema is Decision: return Decision(action='search', option=9, reason='Bad index')
-                return await super().ask(schema, instruction, context, deadline)
-        provider = Provider()
-        result = await self.run_graph(provider, Bad())
-        self.assertEqual(sorted(provider.calls), ['context', 'reviews'])
+    async def test_vibe_summary_does_not_run_lyric_interpretation(self):
+        result = await self.run_graph(document={'lines': [{'text': 'I wait for you'}]})
+        self.assertTrue(result['vibe'])
         self.assertEqual(result['findings'], [])
+        self.assertEqual(result['profile'], unknown_profile())
+
+
 
     async def test_deadline_handles_slow_provider(self):
         class Slow(Provider):
@@ -268,6 +320,8 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
                 await LocalResearchModel().ask(Decision, 'Choose.', {}, time.monotonic()+5)
             self.assertEqual(generation.call_count, 2)
 
+
+
     async def test_stream_returns_candidates_without_inference(self):
         from app.routers import recommend
         matches = [{'id': '123', 'metadata': {'title': 'Test Song', 'artist': 'Test Artist'}}]
@@ -277,29 +331,55 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['recommendations'], matches)
         explanation.assert_not_called()
 
-    async def test_background_job_keeps_success_when_one_candidate_fails(self):
+    async def test_job_describes_each_candidate_using_input_vibe(self):
         import services.research.jobs as jobs
         document = {'song_id': '123', 'title': 'Test Song', 'artist': 'Test Artist',
-                    'source_url': 'https://genius.com/test', 'lines': [{'id': 'L1', 'section': 'Chorus', 'text': 'I wait for you'}]}
-        payload = {'profile': unknown_profile(), 'findings': [], 'sources': [], 'errors': []}
-        async def profile(*args, **kwargs): return copy.deepcopy(payload)
+                    'source_url': 'https://genius.com/test',
+                    'lines': [{'id': 'L1', 'section': 'Chorus', 'text': 'I wait for you'}]}
+        model = Model()
         def fetch(client, song_id):
-            if song_id == '2': raise ValueError('Missing song')
-            return document
+            if song_id == '2':
+                raise ValueError('Unavailable song')
+            return {**document, 'song_id': song_id}
         manager = JobManager()
-        with patch.object(jobs, 'research_song', side_effect=profile), \
-             patch.object(jobs, 'LocalResearchModel', return_value=Model()), \
-             patch.object(jobs, 'PostgresCache', return_value=MemoryCache()), \
+        with patch.object(jobs, 'HTTPResearchProvider', return_value=Provider()), \
+             patch.object(jobs, 'LocalResearchModel', return_value=model), \
              patch('services.lyric_retrieval.make_genius_client', return_value=Mock()), \
              patch('services.lyric_retrieval.fetch_song_document', side_effect=fetch), \
-             patch('services.rag.explain_match', return_value={'summary': 'Shared longing'}), \
-             patch.object(jobs, 'TRACE_DIR', Path(__file__).resolve().parents[1] / '.research-traces'):
-            job_id = manager.start(document, [{'id': '1'}, {'id': '2'}], mode='deep')
+             patch('services.rag.explain_match', side_effect=AssertionError('No extra lyric model calls')):
+            job_id = manager.start(document, [{'id': '1'}, {'id': '2'}, {'id': '3'}])
             await asyncio.gather(*manager.tasks)
         job = manager.snapshot(job_id)
+        self.assertEqual(job['mode'], 'vibe')
         self.assertEqual(job['status'], 'partial')
-        self.assertEqual(job['results']['1']['explanation']['summary'], 'Shared longing')
         self.assertEqual(job['results']['2']['status'], 'unavailable')
+        self.assertEqual(len(model.calls), 3)
+        self.assertIsNone(model.calls[0]['reference'])
+        for call in model.calls[1:]:
+            self.assertEqual(call['reference']['vibe'], job['seed']['vibe'])
+        for song_id in ('1', '3'):
+            result = job['results'][song_id]
+            self.assertTrue(result['profile']['compares_to_seed'])
+            self.assertEqual(result['vibe_description'], result['profile']['vibe'])
+            self.assertIsNone(result['explanation'])
+
+
+    async def test_seed_context_wait_does_not_block_parallel_searches(self):
+        future = asyncio.get_running_loop().create_future()
+        model, provider = Model(), Provider()
+        searched = asyncio.Event()
+        def trace(**event):
+            if event['action'] == 'evidence_ready':
+                searched.set()
+        task = asyncio.create_task(research_song(SONG, None, provider, model,
+            time.monotonic()+3, trace, seed_profile=future))
+        await asyncio.wait_for(searched.wait(), 1)
+        self.assertEqual(model.calls, [])
+        future.set_result({'song': SONG.model_dump(), 'vibe': 'Mellow and atmospheric.'})
+        result = await task
+        self.assertTrue(result['compares_to_seed'])
+        self.assertEqual(model.calls[0]['reference']['vibe'], 'Mellow and atmospheric.')
+
 
     def test_version_and_artist_disambiguation(self):
         remix = Source.model_validate(source('https://example.com', 'Test Song Remix by Test Artist', 'Test Song Test Artist', 'written_excerpt'))

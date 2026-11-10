@@ -33,6 +33,20 @@ class ExcerptTests(unittest.TestCase):
     def test_duplicate_snippets_are_removed(self):
         self.assertEqual(self.excerpt('XO Tour Llif3 review', 'The guitar sounds dreamy.\nThe guitar sounds dreamy.'), 'The guitar sounds dreamy.')
 
+    def test_generic_metric_definitions_on_song_pages_are_not_evidence(self):
+        self.assertEqual(self.excerpt('XO Tour Llif3 - Lil Uzi Vert',
+            'A song high in melodicness generally features clear and memorable instrumental or vocal lines. '
+            'A high energy song may have a driving rhythm and dense instrumentation while a low energy song can be musically sparse and feature slower tempos.'), '')
+
+    def test_definitions_do_not_remove_actual_song_description(self):
+        self.assertEqual(self.excerpt('XO Tour Llif3 review',
+            'A high energy song may have a driving rhythm. The vocals are brooding over distorted bass.'),
+            'The vocals are brooding over distorted bass.')
+
+    def test_general_vibe_words_are_enough_for_song_context(self):
+        self.assertEqual(self.excerpt('XO Tour Llif3 review',
+            'The atmosphere is melancholic and intimate.'), 'The atmosphere is melancholic and intimate.')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -32,7 +32,7 @@ def retrieve_base(song_name, artist_name):
 @router.get('/recommend/stream')
 async def recommend_stream(song_name: str = Query(min_length=1, max_length=200),
                            artist_name: str = Query(default='', max_length=200),
-                           research_mode: Literal['quick', 'deep'] = 'quick'):
+                           research_mode: Literal['quick', 'vibe', 'deep'] = 'vibe'):
     """Return Pinecone candidates before inference/research; poll the attached job."""
     seed, matches = await asyncio.to_thread(retrieve_base, song_name, artist_name)
     job_id = None
@@ -61,9 +61,11 @@ def research_config():
     from services.local_llm import model_name
     from services.research.schema import SCHEMA_VERSION
     return {'providers': HTTPResearchProvider().capabilities(), 'model': model_name(),
-            'searches_per_agent': 2, 'rounds_per_agent': 2,
-            'default_mode': 'quick', 'quick_mode_model_calls': 0, 'audio_analysis': False,
-            'research_revision': SCHEMA_VERSION, 'deep_job_seconds_max': 120, 'deep_model_attempts_max': 10}
+            'searches_per_song': 1, 'searches_per_agent': 1, 'rounds_per_agent': 1,
+            'research_scope': 'song_vibe', 'research_cache_enabled': False,
+            'default_mode': 'vibe', 'quick_mode_model_calls': 0, 'vibe_model_calls_per_song': 1,
+            'support_check_model_calls': 0, 'audio_analysis': False,
+            'research_revision': SCHEMA_VERSION, 'deep_job_seconds_max': 120, 'deep_model_attempts_max': 4}
 
 @router.get('/recommend')
 def recommend_songs(song_name: str = Query(min_length=1, max_length=200),

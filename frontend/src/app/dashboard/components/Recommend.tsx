@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef, useId } from 'react';
 import axios from 'axios';
 import useSongArtwork from './useSongArtwork';
-import ResearchDetails, {type ResearchResult, type ResearchProfile, type ResearchJob} from './ResearchDetails';
+import ResearchDetails, {musicalStatus, vibeDescription, type ResearchResult, type ResearchProfile, type ResearchJob} from './ResearchDetails';
 
 const DOMAIN = process.env.NEXT_PUBLIC_DOMAIN || 'http://localhost:8000';
 
@@ -58,8 +58,9 @@ function Details({ rec, index, image, seed, onClose }: { rec: Recommendation; in
                 <div><p className="ft-eyebrow">YOUR DISCOVERY</p><h2 id={titleId}>{rec.metadata.title}</h2><p className="ft-muted">{artist(rec)}</p></div>
             </div>
             <div className="ft-detail-body">
-                <h3>{rec.research?.profile?.mode === 'quick' ? 'Lyrical match' : 'Why this song?'}</h3>
-                <p>{rec.explanation?.summary || (rec.research?.profile?.mode === 'quick' ? 'Retrieved through lyrical similarity. See the source excerpts and full-song wording comparison below.' : 'We found this song through lyrical similarity. An explanation isn’t available right now.')}</p>
+                <ResearchDetails result={rec.research} seed={seed}/>
+                <h3>Lyrical match</h3>
+                <p>{rec.explanation?.summary || 'We found this song through lyrical similarity.'}</p>
                 {!!rec.explanation?.shared_themes.length && <div className="ft-tags">{rec.explanation.shared_themes.map((theme, i) => <span key={i}>{theme}</span>)}</div>}
                 {rec.explanation?.difference && <div className="ft-difference"><h4>A different perspective</h4><p>{rec.explanation.difference}</p></div>}
                 <p className="ft-score">Lyrical retrieval score <strong>{rec.score.toFixed(3)}</strong></p>
@@ -68,7 +69,6 @@ function Details({ rec, index, image, seed, onClose }: { rec: Recommendation; in
                     {safeLink(rec.sources.candidate) && <a href={safeLink(rec.sources.candidate)} target="_blank" rel="noopener noreferrer">Suggested lyrics on Genius ↗</a>}
                 </div>}
                 {spotify && <a className="ft-primary ft-spotify-link" href={spotify} target="_blank" rel="noopener noreferrer">Open in Spotify ↗</a>}
-                <ResearchDetails result={rec.research} seed={seed}/>
             </div>
         </div>
     </dialog>;
@@ -84,7 +84,7 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
     const [songName, setSongName] = useState('Bad Habit');
     const [artistName, setArtistName] = useState('Steve Lacy');
     const [loading, setLoading] = useState(false);
-    const [deepResearch, setDeepResearch] = useState(false);
+    const [includeVibes, setIncludeVibes] = useState(true);
     const [recommendations, setRecommendations] = useState<Recommendation[]>(initialRecommendations);
     const [error, setError] = useState<string | null>(null);
     const [hasSearched, setHasSearched] = useState(initialRecommendations.length > 0);
@@ -136,11 +136,11 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
         setJobId(null); setResearchJob(null); setResearchProgress('');
         try {
             const response = await axios.get<{recommendations: Recommendation[]; research_job_id: string | null}>(`${DOMAIN}/recommend/stream`, {
-                params: { song_name: songName.trim(), artist_name: artistName.trim(), research_mode: deepResearch ? 'deep' : 'quick' },
+                params: { song_name: songName.trim(), artist_name: artistName.trim(), research_mode: includeVibes ? 'vibe' : 'quick' },
             });
             setRecommendations(response.data.recommendations || []); setHasSearched(true);
             setJobId(response.data.research_job_id);
-            setResearchProgress(response.data.research_job_id ? deepResearch ? 'Songs found. Generating AI explanations and profiles…' : 'Songs found. Gathering source excerpts and lyric overlap…' : 'Research unavailable; your songs remain available.');
+            setResearchProgress(response.data.research_job_id ? includeVibes ? 'Songs found. Looking up their vibes…' : 'Songs found. Gathering source excerpts and lyric overlap…' : 'Research unavailable; your songs remain available.');
         } catch (err: unknown) {
             const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
             setError(typeof detail === 'string' ? detail : 'Could not load recommendations. Please try again.');
@@ -156,8 +156,8 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
                 <button type="submit" className="ft-primary" disabled={!canRecommend}>{loading ? <><span className="ft-spinner" /> Finding songs</> : <>Recommend some new songs <span>↗</span></>}</button>
             </div>
             <p id="recommend-help" className="ft-input-help">An artist helps with shared song titles. For collaborations, the main artist is enough. Title-only searches use the first match.</p>
-            <label className="ft-research-option"><input type="checkbox" checked={deepResearch} onChange={event => setDeepResearch(event.target.checked)} disabled={loading}/>Generate AI explanations and vibe profiles (slower)</label>
-            <p className="ft-input-help">By default, show source excerpts and lyric overlap without waiting for local AI inference.</p>
+            <label className="ft-research-option"><input type="checkbox" checked={includeVibes} onChange={event => setIncludeVibes(event.target.checked)} disabled={loading}/>Include AI vibe descriptions</label>
+            <p className="ft-input-help">Describe the feel of your song and how each recommendation compares. Songs appear while their vibe descriptions load.</p>
         </form>
         {error && <div className="ft-error" role="alert">{error}</div>}
         <div ref={results} className="ft-results" aria-live="polite" aria-busy={loading}>
@@ -167,12 +167,14 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
             </> : recommendations.length ? <>
                 <div className="ft-section-heading"><div><p className="ft-eyebrow">LYRICAL CONNECTIONS</p><h2>Your next discoveries</h2></div><span className="ft-muted">{recommendations.length} tracks · Click to explore</span></div>
                 {recommendations[0].seed_song && <p className="ft-match-note">Inspired by <strong>{recommendations[0].seed_song.title}</strong> · {recommendations[0].seed_song.artist}. Wrong song? Refine the artist above.</p>}
+                {researchJob?.seed?.vibe && <p className="ft-match-note"><strong>Your song’s vibe:</strong> {researchJob.seed.vibe}</p>}
                 {researchProgress && <p className="ft-muted" role="status">{researchProgress}</p>}
                 <div className="ft-card-grid">{recommendations.map((rec, index) => <button key={rec.id} className="ft-song-card" onClick={() => setSelected(index)} aria-label={`Explore ${rec.metadata.title} by ${artist(rec)}`}>
                     <div className="ft-card-art"><Cover title={rec.metadata.title} artistName={artist(rec)} trackId={rec.metadata.spotify_track_id} image={imageFor(rec)} index={index} /><span className="ft-card-arrow">↗</span></div>
                     <p className="ft-card-kicker">DISCOVERY {String(index + 1).padStart(2, '0')}</p>
                     <h3>{rec.metadata.title}</h3><p className="ft-card-artist">{artist(rec)}</p>
-                    <p className="ft-card-summary">{rec.explanation?.summary || 'A new connection through the lyrics. Tap to explore this track.'}</p>
+                    <p className="ft-card-summary">{vibeDescription(rec.research) || rec.explanation?.summary || 'A new connection through the lyrics. Tap to explore this track.'}</p>
+                    {rec.research && <p className="ft-card-research-status">{musicalStatus(rec.research)}</p>}
                     <div className="ft-card-bottom"><span>{rec.explanation?.shared_themes[0] || 'Lyrical connection'}</span><span>Explore →</span></div>
                 </button>)}</div>
                 {!!researchJob?.trace.length && <details className="ft-research-trace"><summary>Research activity</summary>{researchJob.trace.map((event, i) => <p key={i}>{event.agent} · {event.action} · {event.status}{event.duration_ms !== undefined && ` · ${(event.duration_ms / 1000).toFixed(1)}s`}{event.decision && ` · ${event.decision.action}: ${event.decision.reason}`}</p>)}</details>}

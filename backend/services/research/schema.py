@@ -3,7 +3,11 @@ import json
 from typing import Literal
 from pydantic import BaseModel, Field, HttpUrl
 
-SCHEMA_VERSION = 'v6-relevant-excerpts'
+SCHEMA_VERSION = 'v10-simple-vibe'
+ResearchOutcome = Literal[
+    'searching', 'analyzing', 'sources_only', 'observation', 'observation_with_rating',
+    'no_sources', 'no_observation', 'rejected', 'analysis_failed', 'search_failed', 'vibe_ready',
+]
 GROUPS = {
     'lyrical_emotions': ('happy/joyful', 'confident', 'sad', 'longing'),
     'musical_characteristics': ('energy', 'brightness', 'tension', 'acoustic texture'),
@@ -56,6 +60,19 @@ class ObservationChoice(BaseModel):
 
 class ObservationSelection(BaseModel):
     observations: list[ObservationChoice] = Field(default_factory=list, max_length=2)
+
+
+class MusicalRating(BaseModel):
+    label: Literal['energy', 'brightness', 'tension', 'acoustic texture']
+    level: Literal['low', 'medium', 'high']
+
+
+class MusicalObservation(ObservationChoice):
+    rating: MusicalRating | None = None
+
+
+class MusicalSelection(BaseModel):
+    observations: list[MusicalObservation] = Field(default_factory=list, max_length=1)
 
 
 class SupportCheck(BaseModel):

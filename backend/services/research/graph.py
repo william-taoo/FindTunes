@@ -1,24 +1,24 @@
-"""Two tool-using research agents + lyric branch, with fan-out/fan-in validation."""
+"""One song-vibe search and one short prose summary per song."""
 import asyncio
-import operator
 import time
-import re
-from typing import Annotated, TypedDict
+from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
-from .schema import (SongIdentity, Source, Decision, SupportCheck,
-                     ProfileDraft, GROUPS, unknown_profile, identity_matches, ObservationSelection, Finding)
+from .schema import SongIdentity, Source, unknown_profile, identity_matches, ResearchOutcome
 from .providers import tools_for, source
 from .excerpts import relevant_excerpt
 
 
 class State(TypedDict):
     song: dict
-    document: dict | None
     deadline: float
-    sources: Annotated[list[dict], operator.add]
-    findings: Annotated[list[dict], operator.add]
-    errors: Annotated[list[dict], operator.add]
+    sources: list[dict]
+    findings: list[dict]
+    errors: list[dict]
     profile: dict
+    outcome: ResearchOutcome
+    outcome_reason: str | None
+    vibe: str | None
+    compares_to_seed: bool
 
 
 async def timed(trace, agent, action, function, deadline, **details):
@@ -29,263 +29,105 @@ async def timed(trace, agent, action, function, deadline, **details):
               status='ok', **details)
         return result
     except Exception as error:
-        # Error classes are safe; HTTP exception strings can contain API keys.
+        # Exception messages can contain provider credentials.
         trace(agent=agent, action=action, duration_ms=round((time.monotonic()-start)*1000),
               status='failed', error=type(error).__name__, **details)
         raise
 
 
-async def supported_findings(model, sources, song, instruction, deadline, trace, agent):
-    if not sources:
-        return []
-    excerpts = [{'source_index': i, 'title': item['title'], 'sentences':
-        [sentence.strip()[:500] for sentence in re.split(r'(?<=[.!?])\s+|\n', item['text']) if sentence.strip()][:20]}
-        for i, item in enumerate(sources[:8])]
-    selected = await timed(trace, agent, 'extract', lambda: model.ask(ObservationSelection,
-        instruction + ' Choose source_index and sentence_index supporting each claim. '
-        'Do not generate quotes, IDs, URLs or timestamps; Python attaches the real source excerpt. '
-        'At most two short claims. Omit observations if evidence does not support them.',
-        {'song': song.model_dump(), 'excerpts': excerpts}, deadline), deadline)
-    accepted = []
-    for choice in selected.observations[:1]:
-        if choice.source_index >= len(excerpts) or choice.sentence_index >= len(excerpts[choice.source_index]['sentences']):
-            trace(agent=agent, action='reject_finding', status='invalid_excerpt_index')
-            continue
-        original = sources[choice.source_index]
-        quote = excerpts[choice.source_index]['sentences'][choice.sentence_index]
-        if not original['identity_verified'] or quote not in original['text']:
-            trace(agent=agent, action='reject_finding', status='invalid_reference_or_quote')
-            continue
-        finding = Finding(claim=choice.claim, source_id=original['id'], quote=quote,
-            category='lyrical_emotions' if agent == 'lyrics' else 'musical_characteristics',
-            support='lyrical_interpretation' if agent == 'lyrics' else 'sourced_observation')
-        check = await timed(trace, agent, 'validate_claim', lambda: model.ask(SupportCheck,
-            'Independently test whether the quoted TEXT supports the claim and concerns this exact song/version. '
-            'Title/topic similarity is not support. A lyric cannot establish sound. '
-            'An album-wide description does not establish a claim about a particular song. '
-            'The quoted passage must explicitly concern this song; attribute criticism and interviews to their sources. '
-            'Original means no version qualifier: absence of the word original is not a contradiction. '
-            'Lyrics sources are attached to the canonical Genius song ID; reject conflicting versions. '
-            'Reject if uncertain or contradicted.',
-            {'song': song.model_dump(), 'finding': finding.model_dump(), 'source': original}, deadline), deadline)
-        # Lyric identity is already authoritative: fetched and checked by canonical Genius ID.
-        # External observations still require the independent song/version check.
-        if check.supported and (agent == 'lyrics' or check.exact_song_version):
-            accepted.append(finding.model_dump())
-        else:
-            trace(agent=agent, action='reject_finding', status='unsupported', reason=check.reason,
-                  claim_supported=check.supported, exact_song_version=check.exact_song_version)
-    return accepted
-
-
-def build_graph(provider, model, trace=lambda **event: None, mode='deep'):
+def build_graph(provider, model, trace=lambda **event: None, mode='vibe', inference_gate=None, seed_profile=None):
     tools = tools_for(provider)
 
-    async def research(state, agent):
+    async def research(state):
         song = SongIdentity.model_validate(state['song'])
-        deadline = state['deadline']
-        sources, errors = [], []
-        capabilities = provider.capabilities()
+        if not provider.capabilities().get('search_reviews'):
+            return {'sources': [], 'outcome': 'search_failed', 'outcome_reason': 'provider_unavailable',
+                    'errors': [{'agent': 'music', 'code': 'provider_unavailable',
+                                              'message': 'Search provider is not configured.'}]}
         prefix = f'"{song.title}" "{song.artist}"'
         if song.version != 'original':
             prefix += f' "{song.version}"'
-        if agent == 'reviews':
-            queries = [prefix + ' song review music criticism -site:youtube.com -site:youtu.be',
-                       prefix + ' track review vocals instrumentation mood -site:youtube.com -site:youtu.be',
-                       prefix + ' single review production energy -site:youtube.com -site:youtu.be']
-            tool_name = 'search_reviews'
-            role = ('Find published music criticism about this exact song. Prioritize critic observations '
-                    'about mood, vocals, instrumentation, energy, and texture; attribute subjective opinions.')
-        else:
-            queries = [prefix + ' written artist interview song meaning production -site:youtube.com -site:youtu.be',
-                       prefix + ' producer interview recording instrumentation -site:youtube.com -site:youtu.be',
-                       prefix + ' artist commentary making of song production -site:youtube.com -site:youtu.be']
-            tool_name = 'search_context'
-            role = ('Find written artist/producer interviews and production breakdowns about this exact song. '
-                    'Prioritize first-hand intent and recording context. Intent alone does not prove audible sound.')
-        searches = 0
-        if mode == 'quick':
-            # Fast evidence retrieval is a fixed workflow, not an LLM-controlled agent.
-            for query in queries[:2]:
-                if not capabilities.get(tool_name):
-                    errors.append({'agent': agent, 'code': 'provider_unavailable', 'message': 'Search provider is not configured.'})
-                    break
-                try:
-                    values = await timed(trace, agent, tool_name,
-                        lambda: tools[tool_name].ainvoke({'query': query}), deadline)
-                    for value in values:
-                        parsed = Source.model_validate(value)
-                        excerpt = relevant_excerpt(song, parsed)
-                        if identity_matches(song, parsed) and excerpt:
-                            parsed = Source.model_validate(source(str(parsed.url), parsed.title, excerpt, 'written_excerpt'))
-                            item = parsed.model_dump(mode='json')
-                            item['research_role'] = agent
-                            # Retrieval matches are not semantically verified findings.
-                            item['identity_verified'] = False
-                            sources.append(item)
-                    if sources:
-                        break
-                except Exception as error:
-                    errors.append({'agent': agent, 'code': type(error).__name__, 'message': 'Search unavailable.'})
-            return {'sources': sources, 'findings': [], 'errors': errors}
-        findings = []
+        query = prefix + ' song vibe mood atmosphere sound review -site:youtube.com -site:youtu.be'
+        sources = {}
         try:
-            for round_number in range(2):
-                if not capabilities.get(tool_name):
-                    errors.append({'agent': agent, 'code': 'provider_unavailable', 'message': 'Search provider is not configured.'})
-                    break
-                option = 0
-                # The initial search is mandatory; only a follow-up needs an agent decision.
-                if round_number:
-                    decision = await timed(trace, agent, 'decide', lambda: model.ask(Decision,
-                        f'You are the {agent} research agent. ' + role +
-                        ' The first search did not produce a supported observation. Choose search to try '
-                        'another query, or finish. Select option 1 or 2; do not repeat option 0.',
-                        {'song': song.model_dump(), 'available': ['search', 'finish'], 'queries': queries,
-                         'sources': sources[:3], 'errors': errors, 'round': round_number}, deadline), deadline)
-                    trace(agent=agent, action='decision', status='ok', decision=decision.model_dump())
-                    if decision.action == 'finish':
-                        break
-                    option = decision.option or 1
-                args = {'query': queries[option]}
-                try:
-                    values = await timed(trace, agent, tool_name,
-                        lambda: tools[tool_name].ainvoke(args), deadline, arguments=args)
-                except Exception as error:
-                    errors.append({'agent': agent, 'code': type(error).__name__, 'message': 'Search failed.'})
+            values = await timed(trace, 'music', 'search_reviews',
+                lambda: tools['search_reviews'].ainvoke({'query': query}), state['deadline'],
+                arguments={'query': query})
+            for value in values:
+                parsed = Source.model_validate(value)
+                excerpt = relevant_excerpt(song, parsed)
+                if not identity_matches(song, parsed) or not excerpt:
+                    trace(agent='music', action='reject_source', status='identity_mismatch', source_id=parsed.id)
                     continue
-                for item in values:
-                    parsed = Source.model_validate(item)
-                    matches = identity_matches(song, parsed)
-                    excerpt = relevant_excerpt(song, parsed)
-                    if matches and excerpt:
-                        parsed = Source.model_validate(source(str(parsed.url), parsed.title, excerpt, 'written_excerpt'))
-                    parsed.identity_verified = bool(matches and excerpt)
-                    if parsed.identity_verified and parsed.id not in {s['id'] for s in sources}:
-                        value = parsed.model_dump(mode='json')
-                        value['research_role'] = agent
-                        sources.append(value)
-                    elif not parsed.identity_verified:
-                        trace(agent=agent, action='reject_source', status='identity_mismatch', source_id=parsed.id)
-                # This publishes retrieval matches, never verified findings, before inference.
-                if sources:
-                    trace(agent=agent, action='evidence_ready', status='ok', sources=sources)
-                    findings = await supported_findings(model, sources, song,
-                        role + ' Extract at most ONE musical observation explicitly supported by the written excerpt. '
-                        'Reject album-wide claims without song-specific evidence. Do not infer sound from intent alone.',
-                        deadline, trace, agent)
-                    if findings:
-                        break
+                item = source(str(parsed.url), parsed.title, excerpt, 'written_excerpt')
+                item.update(research_role='music', identity_verified=False)
+                sources[item['id']] = item
         except Exception as error:
-            findings = []
-            errors.append({'agent': agent, 'code': type(error).__name__, 'message': 'Research unavailable or output rejected.'})
-        return {'sources': sources, 'findings': findings, 'errors': errors}
+            return {'sources': list(sources.values()), 'outcome': 'search_failed',
+                'outcome_reason': 'timeout' if isinstance(error, TimeoutError) else 'search_error',
+                'errors': [{'agent': 'music',
+                'code': type(error).__name__, 'message': 'Musical search unavailable; no retry was made.'}]}
+        if sources:
+            trace(agent='music', action='evidence_ready', status='ok', sources=list(sources.values()))
+        # Retrieval matches are not semantically verified findings. Never search again.
+        return {'sources': list(sources.values()), 'errors': [], 'outcome_reason': None,
+                'outcome': ('sources_only' if mode == 'quick' else 'analyzing') if sources else 'no_sources'}
 
-    async def reviews(state):
-        return await research(state, 'reviews')
-
-    async def context(state):
-        return await research(state, 'context')
-
-    async def lyrics(state):
-        document = state.get('document')
-        if not document:
-            return {'errors': [{'agent': 'lyrics', 'code': 'lyrics_unavailable', 'message': 'No lyric document.'}]}
-        song = SongIdentity.model_validate(state['song'])
-        from services.passage_retrieval import representative_passages
-        groups = representative_passages(document)
-        items = []
-        for group in groups:
-            item = source(document['source_url'], f'{song.title} — {song.artist}',
-                          '\n'.join(line['text'] for line in group), 'lyrics')
-            item.update(identity_verified=True, line_ids=[line['id'] for line in group])
-            items.append(item)
-        trace(agent='lyrics', action='passage_selection', status='ok',
-              total_lines=len(document['lines']), selected_lines=sum(len(group) for group in groups),
-              sections=list(dict.fromkeys(line.get('section', 'Lyrics') for group in groups for line in group)))
-        if mode == 'quick':
-            return {'sources': items, 'findings': []}
+    async def interpret(state):
+        if mode == 'quick' or not state['sources'] or state['outcome'] == 'search_failed':
+            return {'profile': unknown_profile(), 'findings': []}
         try:
-            findings = await supported_findings(model, items, song,
-                'Interpret lyrical emotions from ONLY supplied excerpts; use lyrical_emotions / lyrical_interpretation. '
-                'No musical or combined vibe claims.', state['deadline'], trace, 'lyrics')
-            return {'sources': items, 'findings': findings}
+            reference = None
+            if seed_profile is not None:
+                try:
+                    seed = await asyncio.wait_for(asyncio.shield(seed_profile),
+                        timeout=max(.01, state['deadline'] - time.monotonic()))
+                    if seed and seed.get('vibe'):
+                        reference = {'song': seed['song'], 'vibe': seed['vibe']}
+                except Exception:
+                    # Missing input-song context should not prevent a candidate description.
+                    reference = None
+            if inference_gate is None:
+                return await interpret_work(state, reference)
+            await asyncio.wait_for(inference_gate.acquire(), timeout=max(.01, state['deadline'] - time.monotonic()))
+            try:
+                return await interpret_work(state, reference)
+            finally:
+                inference_gate.release()
         except Exception as error:
-            return {'sources': items, 'errors': [{'agent': 'lyrics', 'code': type(error).__name__, 'message': 'Lyric interpretation unavailable.'}]}
+            reason = ('timeout' if isinstance(error, TimeoutError) else
+                      'invalid_output' if type(error).__name__ in ('ValidationError', 'OutputParserException') else
+                      'call_limit' if type(error).__name__ == 'InferenceBudgetExceeded' else 'model_error')
+            return {'profile': unknown_profile(), 'findings': [], 'outcome': 'analysis_failed',
+                'outcome_reason': reason, 'errors': [*state['errors'],
+                {'agent': 'music', 'code': type(error).__name__,
+                 'message': 'Musical interpretation unavailable; retrieved excerpts retained.'}]}
 
-    async def synthesize(state):
-        profile = unknown_profile()
-        if not state['findings']:
-            return {'profile': profile}
-        try:
-            draft = await timed(trace, 'synthesis', 'profile', lambda: model.ask(ProfileDraft,
-                'Apply low/medium/high to strength/prominence, NOT probabilities. Low=weak/subtle, '
-                'medium=clear/mixed, high=dominant/explicit. Unknown=insufficient evidence. '
-                'Multiple emotions can coexist. Use exact permitted labels. Each explanation must cite finding INDEXES. '
-                'Musical characteristics require musical observations. Combined vibe requires BOTH lyric and musical findings. '
-                'Do not infer tempo, sound, or instruments from lyrics.',
-                {'findings': state['findings'], 'labels': GROUPS}, state['deadline']), state['deadline'])
-            remaining_ratings = 1
-            for group, ratings in draft.model_dump().items():
-                for rating in ratings:
-                    if not remaining_ratings:
-                        break
-                    refs = rating['finding_ids']
-                    if rating['label'] not in GROUPS[group] or not refs or any(i < 0 or i >= len(state['findings']) for i in refs):
-                        continue
-                    categories = {state['findings'][i]['category'] for i in refs}
-                    required = {'lyrical_emotions', 'musical_characteristics'} if group == 'combined_vibe' else {group}
-                    if not required.issubset(categories):
-                        continue
-                    remaining_ratings -= 1
-                    check = await timed(trace, 'synthesis', 'validate_rating', lambda: model.ask(SupportCheck,
-                        'Does the evidence actually support this rating LEVEL and explanation? Reject speculative sound claims '
-                        'or unsupported intensity. Combined vibe is interpretation, not measured audio.',
-                        {'song': state['song'], 'rating': rating, 'evidence': [state['findings'][i] for i in refs]}, state['deadline']), state['deadline'])
-                    if check.supported and check.exact_song_version:
-                        profile[group] = [rating if row['label'] == rating['label'] else row for row in profile[group]]
-        except Exception as error:
-            return {'profile': profile, 'errors': [{'agent': 'synthesis', 'code': type(error).__name__, 'message': 'Partial profile; unsupported ratings stay unknown.'}]}
-        return {'profile': profile}
+    async def interpret_work(state, reference):
+        vibe = await timed(trace, 'vibe', 'describe', lambda: model.describe_vibe(
+            state['song'], state['sources'], state['deadline'], reference=reference), state['deadline'])
+        return {'profile': unknown_profile(), 'findings': [], 'vibe': vibe,
+                'compares_to_seed': bool(reference), 'outcome': 'vibe_ready', 'outcome_reason': None}
 
     graph = StateGraph(State)
-    for name, function in [('reviews', reviews), ('context', context), ('lyrics', lyrics), ('synthesis', synthesize)]:
-        graph.add_node(name, function)
-    for name in ('reviews', 'context', 'lyrics'):
-        graph.add_edge(START, name)
-    graph.add_edge(['reviews', 'context', 'lyrics'], 'synthesis')
-    graph.add_edge('synthesis', END)
+    graph.add_node('music', research)
+    graph.add_node('interpret', interpret)
+    graph.add_edge(START, 'music')
+    graph.add_edge('music', 'interpret')
+    graph.add_edge('interpret', END)
     return graph.compile()
 
 
-async def research_song(song, document, provider, model, cache, deadline, trace, mode='deep'):
-    import hashlib
-    import json
-    import os
-    # Capability/model changes invalidate cached unavailable profiles.
-    config_key = hashlib.sha256(json.dumps([mode, provider.capabilities(), os.getenv('LOCAL_LLM_MODEL', 'Qwen/Qwen3-0.6B')], sort_keys=True).encode()).hexdigest()[:10]
-    key = hashlib.sha256((song.cache_key() + config_key).encode()).hexdigest()
-    cache_error = []
-    try:
-        cached = await asyncio.wait_for(cache.get(key), timeout=max(.1, min(3, deadline - time.monotonic())))
-        if cached:
-            trace(agent='cache', action='hit', status='ok', song_id=song.genius_id)
-            return {**cached, 'cached': True}
-    except Exception:
-        cache_error = [{'agent': 'cache', 'code': 'cache_unavailable', 'message': 'Run the research cache migration; research can still proceed.'}]
-    result = await build_graph(provider, model, trace, mode=mode).ainvoke({'song': song.model_dump(),
-        'document': document, 'deadline': deadline, 'sources': [], 'findings': [], 'errors': cache_error},
-        config={'recursion_limit': 8})
-    # Deduplicate provenance and omit lyric source text from persisted/output profiles.
-    sources = {s['id']: {**s, 'text': '' if s['kind'] == 'lyrics' else s['text']} for s in result['sources']}
-    has_ratings = any(row['level'] != 'unknown' for rows in result['profile'].values() for row in rows)
-    payload = {'mode': mode, 'analysis_status': 'complete' if (result['findings'] or has_ratings) and not result['errors'] else 'partial',
+async def research_song(song, document, provider, model, deadline, trace, mode='vibe', inference_gate=None, seed_profile=None):
+    # Lyrics remain in the existing retrieval/comparison path, outside musical research.
+    result = await build_graph(provider, model, trace, mode=mode, inference_gate=inference_gate, seed_profile=seed_profile).ainvoke({
+        'song': song.model_dump(), 'deadline': deadline, 'sources': [], 'findings': [],
+        'errors': [], 'profile': unknown_profile(), 'outcome': 'searching',
+        'outcome_reason': None, 'vibe': None, 'compares_to_seed': False}, config={'recursion_limit': 8})
+    return {'mode': mode, 'analysis_status': 'complete' if result.get('vibe') or mode == 'quick' and not result['errors'] else 'partial',
         'song': song.model_dump(), 'profile': result['profile'], 'findings': result['findings'],
-        'sources': list(sources.values()), 'errors': result['errors'], 'cached': False,
-        'evidence_availability': {kind: any(s['kind'] == kind for s in sources.values())
-            for kind in ('lyrics', 'written_excerpt')}}
-    try:
-        await asyncio.wait_for(cache.put(key, payload), timeout=3)
-    except Exception:
-        payload['errors'].append({'agent': 'cache', 'code': 'cache_write_failed', 'message': 'Profile not persisted.'})
-    return payload
+        'sources': result['sources'], 'errors': result['errors'], 'cached': False,
+        'vibe': result.get('vibe'), 'compares_to_seed': result.get('compares_to_seed', False),
+        'vibe_basis': 'search_excerpts',
+        'outcome': result['outcome'], 'outcome_reason': result['outcome_reason'],
+        'evidence_availability': {'lyrics': False, 'written_excerpt': bool(result['sources'])}}

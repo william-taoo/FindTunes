@@ -1,5 +1,4 @@
 """Written review and artist/production research via bounded search excerpts."""
-import asyncio
 import hashlib
 import os
 import time
@@ -39,18 +38,9 @@ class HTTPResearchProvider:
     async def _get(self, url, **kwargs):
         # Only fixed provider endpoints are reachable; keys never appear in traces.
         async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-            for attempt in range(2):
-                try:
-                    response = await client.get(url, **kwargs)
-                    if response.status_code >= 500 and attempt == 0:
-                        await asyncio.sleep(.2)
-                        continue
-                    response.raise_for_status()
-                    return response
-                except httpx.TransportError:
-                    if attempt:
-                        raise
-        raise RuntimeError('Provider request unavailable')
+            response = await client.get(url, **kwargs)
+            response.raise_for_status()
+            return response
 
     async def search_written(self, query):
         key = os.getenv('BRAVE_SEARCH_API_KEY')
