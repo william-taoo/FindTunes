@@ -1,0 +1,13 @@
+# For catalog-only hosting with CATALOG_INGESTION_ENABLED=false and RESEARCH_ENABLED=false.
+fastapi
+uvicorn[standard]
+lyricsgenius
+spotipy
+python-dotenv
+pinecone
+sqlalchemy[asyncio]
+alembic
+httpx
+asyncpg
+langchain-core>=0.3,<2
+langgraph>=1,<2

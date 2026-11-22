@@ -14,7 +14,7 @@ from services import rag, local_llm
 with patch.dict(sys.modules, {'lyricsgenius': SimpleNamespace(Genius=Mock())}):
     retrieval = importlib.import_module('services.lyric_retrieval')
 with patch.dict(sys.modules, {
-    'services.pinecone_utils': SimpleNamespace(query_vector=Mock()),
+    'services.pinecone_utils': SimpleNamespace(query_vector=Mock(), ingestion_enabled=lambda: True),
     'services.lyric_retrieval': retrieval,
 }):
     route = importlib.import_module('app.routers.recommend')

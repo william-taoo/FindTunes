@@ -40,6 +40,19 @@ def search_song_with_retry(client, title, artist):
     return None
 
 
+def search_song_identity(client, title, artist):
+    """Resolve an indexed song without fetching its lyrics page."""
+    query = f'{title} {artist}'.strip()
+    hits = client.search_songs(query, per_page=5).get('hits', [])
+    songs = [hit['result'] for hit in hits if hit.get('type') == 'song']
+    if artist:
+        songs = [song for song in songs if song['primary_artist']['name'].casefold() == artist.casefold()]
+    if not songs:
+        return None
+    match = next((song for song in songs if song['title'].casefold() == title.casefold()), songs[0])
+    return {'id': str(match['id']), 'title': match['title'], 'artist': match['primary_artist']['name']}
+
+
 def song_to_document(song):
     raw = song.lyrics or ''
     if 'Read More' in raw:

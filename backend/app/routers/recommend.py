@@ -3,8 +3,8 @@ import asyncio
 import os
 from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
-from services.pinecone_utils import query_vector
-from services.lyric_retrieval import make_genius_client, song_to_document, fetch_song_document, song_id, song_artist, search_song_with_retry
+from services.pinecone_utils import ingestion_enabled, query_vector
+from services.lyric_retrieval import make_genius_client, song_to_document, fetch_song_document, song_id, song_artist, search_song_identity, search_song_with_retry
 from services.rag import is_configured, explain_match
 
 router = APIRouter()
@@ -15,20 +15,28 @@ def retrieve_base(song_name, artist_name):
     song_name, artist_name = song_name.strip(), artist_name.strip()
     if not song_name:
         raise HTTPException(400, 'Enter a song title to get recommendations.')
+    catalog_only = not ingestion_enabled()
+    song = None
     try:
-        song = search_song_with_retry(make_genius_client(), song_name, artist_name)
-    except Exception:
+        client = make_genius_client()
+        if catalog_only:
+            resolved = search_song_identity(client, song_name, artist_name)
+        else:
+            song = search_song_with_retry(client, song_name, artist_name)
+            resolved = {'id': song_id(song), 'title': song.title, 'artist': song_artist(song)} if song else None
+    except Exception as error:
+        logger.warning('Song lookup failed (%s)', type(error).__name__)
         raise HTTPException(502, 'Could not retrieve the input song')
-    if song is None:
+    if resolved is None:
         raise HTTPException(404, 'Song not found; refine the title or artist.')
-    resolved = {'id': song_id(song), 'title': song.title, 'artist': song_artist(song)}
     matches = query_vector(resolved['id'], resolved['title'], resolved['artist'])
     if matches is None:
         raise HTTPException(404, 'This song is outside the current FindTunes catalog. Try another title.')
     if matches == -1:
         raise HTTPException(502, 'Song similarity search failed')
-    return song_to_document(song), [{**match, 'seed_song': resolved, 'explanation': None,
-        'explanation_status': 'pending', 'sources': None} for match in matches]
+    return (song_to_document(song) if song is not None else None), [
+        {**match, 'seed_song': resolved, 'explanation': None,
+         'explanation_status': 'disabled' if catalog_only else 'pending', 'sources': None} for match in matches]
 
 
 @router.get('/recommend/stream')
@@ -72,6 +80,8 @@ def research_config():
 @router.get('/recommend')
 def recommend_songs(song_name: str = Query(min_length=1, max_length=200),
                     artist_name: str = Query(default='', max_length=200)):
+    if not ingestion_enabled():
+        return retrieve_base(song_name, artist_name)[1]
     # Synchronous external libraries run in FastAPI's worker thread pool.
     song_name, artist_name = song_name.strip(), artist_name.strip()
     if not song_name:

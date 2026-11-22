@@ -1,5 +1,4 @@
 from lyricsgenius import Genius
-import numpy as np
 import unicodedata
 import os
 import spotipy
@@ -43,6 +42,8 @@ def get_spotify_track_info(song_name: str, artist_name: str):
     return None
 
 def embed_and_store(song, artist_name: str):
+    import numpy as np
+
     from .embeddings import clean_lyrics, split_lyrics, get_song_embedding
 
     annotation, lyrics = split_lyrics(song.lyrics)
