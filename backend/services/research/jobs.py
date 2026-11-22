@@ -95,7 +95,7 @@ class JobManager:
         inference_budget = InferenceBudget(4)
         seed_task = None
         seed_link_task = None
-        metadata_only = mode in ('quick', 'lyrics_links') and 'lines' not in seed_document
+        metadata_only = 'lines' not in seed_document
         inference_gate = asyncio.Semaphore(1)
         def trace(**event):
             event = {'elapsed_ms': round((time.monotonic() - started)*1000), **event}
@@ -157,7 +157,8 @@ class JobManager:
                 artist = next(iter(artist), None)
             if metadata.get('title') and artist:
                 document = {'song_id': str(match['id']), 'title': metadata['title'], 'artist': artist}
-                await asyncio.gather(catalog_links(result, match['id']), profile(document))
+                research, _ = await asyncio.gather(profile(document, reference=seed_task), catalog_links(result, match['id']))
+                result['vibe_description'] = research.get('vibe')
             else:
                 await catalog_links(result, match['id'])
             return result['sources'] or (result['profile'] or {}).get('sources')
@@ -168,7 +169,8 @@ class JobManager:
             job['results'][str(match['id'])] = result
             try:
                 if metadata_only:
-                    result['status'] = 'evidence_only' if await catalog_sources(match, result) else 'unavailable'
+                    sources = await catalog_sources(match, result)
+                    result['status'] = 'complete' if result['vibe_description'] else 'evidence_only' if sources else 'unavailable'
                 else:
                     # Request-scoped clients avoid sharing lyricsgenius state between workers.
                     document = await asyncio.to_thread(fetch_song_document, make_genius_client(), match['id'])
@@ -192,7 +194,7 @@ class JobManager:
             # Seed and candidate retrieval can overlap. Comparisons wait only for the seed result.
             if mode != 'lyrics_links':
                 seed_task = asyncio.create_task(profile(seed_document))
-            if metadata_only:
+            if metadata_only and matches:
                 seed_link_task = asyncio.create_task(lyric_link(seed_document['song_id']))
             try:
                 await asyncio.gather(*(candidate(match) for match in matches[:3]))

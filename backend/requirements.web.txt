@@ -1,4 +1,4 @@
-# For catalog-only hosting with CATALOG_INGESTION_ENABLED=false and RESEARCH_ENABLED=false.
+# For catalog-only hosting with CATALOG_INGESTION_ENABLED=false and optional hosted inference.
 fastapi
 uvicorn[standard]
 lyricsgenius

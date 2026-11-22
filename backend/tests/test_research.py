@@ -367,7 +367,7 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
         import services.research.jobs as jobs
         seed = {'song_id': '123', 'title': 'Test Song', 'artist': 'Test Artist'}
         matches = [{'id': '456', 'metadata': {'title': 'Test Song', 'artist': ['Test Artist']}}]
-        for mode in ('lyrics_links', 'quick'):
+        for mode in ('lyrics_links', 'quick', 'vibe'):
             with self.subTest(mode=mode):
                 provider, model, manager = Provider(), Model(), JobManager()
                 with patch.object(jobs, 'HTTPResearchProvider', return_value=provider), \
@@ -380,13 +380,37 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
                 result = job['results']['456']
                 self.assertEqual(job['status'], 'complete')
                 self.assertEqual(result['sources'], {'seed': 'https://genius.com/123', 'candidate': 'https://genius.com/456'})
-                self.assertEqual(model.calls, [])
-                if mode == 'quick':
+                if mode == 'vibe':
+                    self.assertEqual(len(provider.calls), 2)
+                    self.assertEqual(len(model.calls), 2)
+                    self.assertEqual(model.calls[1]['reference']['vibe'], job['seed']['vibe'])
+                    self.assertEqual(result['status'], 'complete')
+                elif mode == 'quick':
+                    self.assertEqual(model.calls, [])
                     self.assertEqual(len(provider.calls), 2)
                     self.assertEqual(result['profile']['outcome'], 'sources_only')
                 else:
+                    self.assertEqual(model.calls, [])
                     self.assertEqual(provider.calls, [])
                     self.assertIsNone(result['profile'])
+
+    async def test_hosted_model_uses_gateway_without_loading_local_model(self):
+        import httpx
+
+        response = httpx.Response(200, request=httpx.Request('POST', 'https://ai-gateway.vercel.sh/v1/chat/completions'),
+                                  json={'choices': [{'message': {'content': 'It feels mellow and reflective.'}}]})
+        client = AsyncMock()
+        client.__aenter__.return_value.post.return_value = response
+        with patch.dict('os.environ', {'AI_GATEWAY_API_KEY': 'test-key', 'RESEARCH_GATEWAY_MODEL': 'test-model'}), \
+             patch('services.research.model.httpx.AsyncClient', return_value=client), \
+             patch('services.research.model.generate_local', side_effect=AssertionError('Local inference is disabled')):
+            summary = await LocalResearchModel().describe_vibe(SONG.model_dump(), [
+                {'title': 'Review', 'text': 'A mellow and reflective recording.'},
+            ], time.monotonic() + 5)
+        self.assertEqual(summary, 'It feels mellow and reflective.')
+        args = client.__aenter__.return_value.post.call_args.kwargs
+        self.assertEqual(args['json']['model'], 'test-model')
+        self.assertIn('A mellow and reflective recording.', args['json']['messages'][1]['content'])
 
 
     async def test_seed_context_wait_does_not_block_parallel_searches(self):

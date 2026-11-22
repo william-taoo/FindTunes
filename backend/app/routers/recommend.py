@@ -15,6 +15,10 @@ def written_research_enabled():
     return bool(os.getenv('BRAVE_SEARCH_API_KEY')) and os.getenv('RESEARCH_ENABLED', 'true').lower() not in ('false', '0', 'no')
 
 
+def vibe_research_enabled():
+    return written_research_enabled() and (ingestion_enabled() or bool(os.getenv('AI_GATEWAY_API_KEY')))
+
+
 def retrieve_base(song_name, artist_name, spotify_track_id=None):
     song_name, artist_name = song_name.strip(), artist_name.strip()
     if not song_name:
@@ -60,7 +64,10 @@ async def recommend_stream(song_name: str = Query(min_length=1, max_length=200),
     if not ingestion_enabled() and matches:
         identity = matches[0]['seed_song']
         seed = {'song_id': identity['id'], 'title': identity['title'], 'artist': identity['artist']}
-        job_mode = 'quick' if written_enabled else 'lyrics_links'
+        if written_enabled:
+            job_mode = 'vibe' if research_mode != 'quick' and vibe_research_enabled() else 'quick'
+        else:
+            job_mode = 'lyrics_links'
     elif seed and matches and written_enabled:
         job_mode = 'vibe' if research_mode == 'deep' else research_mode
     if job_mode:
@@ -86,9 +93,11 @@ async def research_status(job_id: str):
 def research_config():
     from services.research.providers import HTTPResearchProvider
     from services.local_llm import model_name
+    from services.research.model import gateway_model_name
     from services.research.schema import SCHEMA_VERSION
-    return {'providers': HTTPResearchProvider().capabilities(), 'model': model_name(),
-            'vibe_enabled': ingestion_enabled() and written_research_enabled(),
+    return {'providers': HTTPResearchProvider().capabilities(),
+            'model': gateway_model_name() if os.getenv('AI_GATEWAY_API_KEY') else model_name(),
+            'vibe_enabled': vibe_research_enabled(),
             'searches_per_song': 1, 'searches_per_agent': 1, 'rounds_per_agent': 1,
             'research_scope': 'song_vibe', 'research_cache_enabled': False,
             'default_mode': 'vibe', 'quick_mode_model_calls': 0, 'vibe_model_calls_per_song': 1,

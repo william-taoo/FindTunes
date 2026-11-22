@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties } from 'react';
+import Link from 'next/link';
 
 // Curated from the saved Spotify favorites; public artist imagery only.
 const portraits = [
@@ -38,7 +39,7 @@ export default function Home() {
         <p className="ft-landing-description">You know the feeling.<br/>Find the song that gives it back.</p>
         <p className="ft-landing-subcopy">Discover songs connected by lyrics. Explore the words, stories, and sounds that bring them together.</p>
         <a className="ft-landing-cta" href="/api/auth"><span aria-hidden="true">♫</span> Find my next favorite <span aria-hidden="true">↗</span></a>
-        <p className="ft-landing-footnote">Connect your Spotify. Follow your curiosity.</p>
+        <p className="ft-landing-footnote"><Link href="/discover" className="underline underline-offset-4">Try song search as a guest ↗</Link></p>
       </div>
       <div className="ft-portrait-stage">
         <div className="ft-stage-grid" aria-hidden="true"/>
