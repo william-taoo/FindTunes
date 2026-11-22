@@ -14,10 +14,10 @@ export interface Recommendation {
     explanation_status: 'complete' | 'unavailable' | 'disabled' | 'pending';
     research?: ResearchResult;
     explanation: { summary: string; shared_themes: string[]; difference: string } | null;
-    sources: { seed: string; candidate: string } | null;
+    sources: { seed: string | null; candidate: string | null } | null;
 }
 
-function safeLink(url?: string) {
+function safeLink(url?: string | null) {
     try { const parsed = new URL(url || ''); return parsed.protocol === 'https:' ? parsed.href : undefined; }
     catch { return undefined; }
 }
@@ -86,6 +86,7 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
     const [spotifyTrackId, setSpotifyTrackId] = useState<string>();
     const [loading, setLoading] = useState(false);
     const [includeVibes, setIncludeVibes] = useState(true);
+    const [vibeEnabled, setVibeEnabled] = useState(false);
     const [recommendations, setRecommendations] = useState<Recommendation[]>(initialRecommendations);
     const [error, setError] = useState<string | null>(null);
     const [hasSearched, setHasSearched] = useState(initialRecommendations.length > 0);
@@ -97,6 +98,13 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
     const songInput = useRef<HTMLInputElement>(null);
     useEffect(() => { onSongChange?.({name: songName, artist: artistName}); }, [songName, artistName, onSongChange]);
     const canRecommend = !!songName.trim() && !loading;
+    useEffect(() => {
+        const controller = new AbortController();
+        axios.get<{vibe_enabled: boolean}>(`${DOMAIN}/research/config`, {signal: controller.signal})
+            .then(({data}) => setVibeEnabled(data.vibe_enabled === true))
+            .catch(() => {});
+        return () => controller.abort();
+    }, []);
     useEffect(() => {
         if (selectedTrack) {
             setSongName(selectedTrack.name);
@@ -141,15 +149,21 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
         setLoading(true); setError(null); setRecommendations([]); setHasSearched(false); setSelected(null);
         setJobId(null); setResearchJob(null); setResearchProgress('');
         try {
-            const response = await axios.get<{recommendations: Recommendation[]; research_job_id: string | null}>(`${DOMAIN}/recommend/stream`, {
+            const response = await axios.get<{recommendations: Recommendation[]; research_job_id: string | null; research_mode?: ResearchJob['mode']}>(`${DOMAIN}/recommend/stream`, {
                 params: {
                     song_name: songName.trim(), artist_name: artistName.trim(),
-                    spotify_track_id: spotifyTrackId, research_mode: includeVibes ? 'vibe' : 'quick',
+                    spotify_track_id: spotifyTrackId, research_mode: vibeEnabled && includeVibes ? 'vibe' : 'quick',
                 },
             });
             setRecommendations(response.data.recommendations || []); setHasSearched(true);
             setJobId(response.data.research_job_id);
-            setResearchProgress(response.data.research_job_id ? includeVibes ? 'Songs found. Looking up their vibes…' : 'Songs found. Gathering source excerpts and lyric overlap…' : 'Research unavailable; your songs remain available.');
+            const mode = response.data.research_mode;
+            if (response.data.research_job_id) {
+                setResearchProgress(mode === 'vibe' ? 'Songs found. Looking up their vibes…' :
+                    mode === 'lyrics_links' ? 'Songs found. Looking up Genius lyric links…' : 'Songs found. Gathering written sources…');
+            } else if (mode) {
+                setResearchProgress('Source lookup unavailable; your songs remain available.');
+            }
         } catch (err: unknown) {
             const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
             setError(typeof detail === 'string' ? detail : 'Could not load recommendations. Please try again.');
@@ -165,8 +179,7 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
                 <button type="submit" className="ft-primary" disabled={!canRecommend}>{loading ? <><span className="ft-spinner" /> Finding songs</> : <>Recommend some new songs <span>↗</span></>}</button>
             </div>
             <p id="recommend-help" className="ft-input-help">An artist helps with shared song titles. For collaborations, the main artist is enough. Title-only searches use the first match.</p>
-            <label className="ft-research-option"><input type="checkbox" checked={includeVibes} onChange={event => setIncludeVibes(event.target.checked)} disabled={loading}/>Include AI vibe descriptions</label>
-            <p className="ft-input-help">Describe the feel of your song and how each recommendation compares. Songs appear while their vibe descriptions load.</p>
+            {vibeEnabled && <label className="ft-research-option"><input type="checkbox" checked={includeVibes} onChange={event => setIncludeVibes(event.target.checked)} disabled={loading}/>Include AI vibe descriptions</label>}
         </form>
         {error && <div className="ft-error" role="alert">{error}</div>}
         <div ref={results} className="ft-results" aria-live="polite" aria-busy={loading}>
@@ -183,7 +196,9 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
                     <p className="ft-card-kicker">DISCOVERY {String(index + 1).padStart(2, '0')}</p>
                     <h3>{rec.metadata.title}</h3><p className="ft-card-artist">{artist(rec)}</p>
                     <p className="ft-card-summary">{vibeDescription(rec.research) || rec.explanation?.summary || 'A new connection through the lyrics. Tap to explore this track.'}</p>
-                    {rec.research && <p className="ft-card-research-status">{musicalStatus(rec.research)}</p>}
+                    {rec.research?.profile && <p className="ft-card-research-status">{rec.research.profile.mode === 'quick' ?
+                        rec.research.profile.sources.length ? 'Written sources available' : '' : musicalStatus(rec.research)}</p>}
+                    {rec.sources && !rec.research?.profile?.sources.length && <p className="ft-card-research-status">Genius lyric links available</p>}
                     <div className="ft-card-bottom"><span>{rec.explanation?.shared_themes[0] || 'Lyrical connection'}</span><span>Explore →</span></div>
                 </button>)}</div>
                 {!!researchJob?.trace.length && <details className="ft-research-trace"><summary>Research activity</summary>{researchJob.trace.map((event, i) => <p key={i}>{event.agent} · {event.action} · {event.status}{event.duration_ms !== undefined && ` · ${(event.duration_ms / 1000).toFixed(1)}s`}{event.decision && ` · ${event.decision.action}: ${event.decision.reason}`}</p>)}</details>}

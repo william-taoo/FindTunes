@@ -53,4 +53,7 @@ for (const [outcome,label] of [
 }
 assert.equal(vibeDescription(result('analyzing')),null);
 assert.equal(musicalOutcome(undefined).code,'unavailable');
+assert.equal(renderToStaticMarkup(React.createElement(Details, {
+    result: {status:'evidence_only', profile:null, sources:{seed:'https://genius.com/123', candidate:'https://genius.com/456'}},
+})), '');
 console.log('Vibe UI checks passed: card description, input-song context, source links, loading/failure states, and no ratings/checklist.');

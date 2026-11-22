@@ -11,6 +11,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def written_research_enabled():
+    return bool(os.getenv('BRAVE_SEARCH_API_KEY')) and os.getenv('RESEARCH_ENABLED', 'true').lower() not in ('false', '0', 'no')
+
+
 def retrieve_base(song_name, artist_name, spotify_track_id=None):
     song_name, artist_name = song_name.strip(), artist_name.strip()
     if not song_name:
@@ -51,14 +55,22 @@ async def recommend_stream(song_name: str = Query(min_length=1, max_length=200),
     """Return Pinecone candidates before inference/research; poll the attached job."""
     seed, matches = await asyncio.to_thread(retrieve_base, song_name, artist_name, spotify_track_id)
     job_id = None
-    if seed and matches and os.getenv('RESEARCH_ENABLED', 'true').lower() not in ('false', '0', 'no'):
+    job_mode = None
+    written_enabled = written_research_enabled()
+    if not ingestion_enabled() and matches:
+        identity = matches[0]['seed_song']
+        seed = {'song_id': identity['id'], 'title': identity['title'], 'artist': identity['artist']}
+        job_mode = 'quick' if written_enabled else 'lyrics_links'
+    elif seed and matches and written_enabled:
+        job_mode = 'vibe' if research_mode == 'deep' else research_mode
+    if job_mode:
         try:
             from services.research.jobs import manager
-            job_id = manager.start(seed, matches, mode=research_mode)
+            job_id = manager.start(seed, matches, mode=job_mode)
         except Exception:
             logger.exception('Research could not be started')
     return {'recommendations': matches, 'research_job_id': job_id,
-            'research_status': 'queued' if job_id else 'unavailable'}
+            'research_status': 'queued' if job_id else 'unavailable', 'research_mode': job_mode}
 
 
 @router.get('/research/jobs/{job_id}')
@@ -76,6 +88,7 @@ def research_config():
     from services.local_llm import model_name
     from services.research.schema import SCHEMA_VERSION
     return {'providers': HTTPResearchProvider().capabilities(), 'model': model_name(),
+            'vibe_enabled': ingestion_enabled() and written_research_enabled(),
             'searches_per_song': 1, 'searches_per_agent': 1, 'rounds_per_agent': 1,
             'research_scope': 'song_vibe', 'research_cache_enabled': False,
             'default_mode': 'vibe', 'quick_mode_model_calls': 0, 'vibe_model_calls_per_song': 1,

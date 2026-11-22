@@ -363,6 +363,31 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result['vibe_description'], result['profile']['vibe'])
             self.assertIsNone(result['explanation'])
 
+    async def test_catalog_source_jobs_do_not_require_lyric_documents(self):
+        import services.research.jobs as jobs
+        seed = {'song_id': '123', 'title': 'Test Song', 'artist': 'Test Artist'}
+        matches = [{'id': '456', 'metadata': {'title': 'Test Song', 'artist': ['Test Artist']}}]
+        for mode in ('lyrics_links', 'quick'):
+            with self.subTest(mode=mode):
+                provider, model, manager = Provider(), Model(), JobManager()
+                with patch.object(jobs, 'HTTPResearchProvider', return_value=provider), \
+                     patch.object(jobs, 'LocalResearchModel', return_value=model), \
+                     patch('services.lyric_retrieval.fetch_song_source_url', side_effect=lambda song_id: f'https://genius.com/{song_id}'), \
+                     patch('services.lyric_retrieval.fetch_song_document', side_effect=AssertionError('Catalog lookup must skip lyrics pages')):
+                    job_id = manager.start(seed, matches, mode=mode)
+                    await asyncio.gather(*manager.tasks)
+                job = manager.snapshot(job_id)
+                result = job['results']['456']
+                self.assertEqual(job['status'], 'complete')
+                self.assertEqual(result['sources'], {'seed': 'https://genius.com/123', 'candidate': 'https://genius.com/456'})
+                self.assertEqual(model.calls, [])
+                if mode == 'quick':
+                    self.assertEqual(len(provider.calls), 2)
+                    self.assertEqual(result['profile']['outcome'], 'sources_only')
+                else:
+                    self.assertEqual(provider.calls, [])
+                    self.assertIsNone(result['profile'])
+
 
     async def test_seed_context_wait_does_not_block_parallel_searches(self):
         future = asyncio.get_running_loop().create_future()

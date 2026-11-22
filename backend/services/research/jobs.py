@@ -67,7 +67,7 @@ class JobManager:
         mode = 'vibe' if mode == 'deep' else mode
         now = time.time()
         self.jobs = {key: value for key, value in self.jobs.items() if now - value['created_at'] < 1800}
-        limit = 2 if mode == 'quick' else 1
+        limit = 1 if mode == 'vibe' else 2
         if sum(job['status'] in ('queued', 'running') and job.get('mode', mode) == mode for job in self.jobs.values()) >= limit:
             return None
         if len(self.jobs) >= 50:
@@ -76,7 +76,7 @@ class JobManager:
                 del self.jobs[completed]
         job_id = uuid.uuid4().hex
         self.jobs[job_id] = {'id': job_id, 'status': 'queued', 'created_at': now,
-                            'mode': mode, 'progress': 'Queued for evidence retrieval' if mode == 'quick' else 'Queued for song vibes', 'seed': None, 'results': {}, 'errors': [], 'trace': []}
+                            'mode': mode, 'progress': 'Queued for song vibes' if mode == 'vibe' else 'Queued for source lookup', 'seed': None, 'results': {}, 'errors': [], 'trace': []}
         task = asyncio.create_task(self.run(job_id, seed_document, matches, mode=mode))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
@@ -86,14 +86,16 @@ class JobManager:
         return self.jobs.get(job_id)
 
     async def run(self, job_id, seed_document, matches, mode='vibe'):
-        from services.lyric_retrieval import make_genius_client, fetch_song_document
+        from services.lyric_retrieval import make_genius_client, fetch_song_document, fetch_song_source_url
         job = self.jobs[job_id]
         started = time.monotonic()
-        seconds = 60 if mode == 'quick' else budget('RESEARCH_JOB_SECONDS', 120, 120)
+        seconds = budget('RESEARCH_JOB_SECONDS', 120, 120) if mode == 'vibe' else 60
         deadline = started + seconds
         # One prose generation for the input song and each of three candidates.
         inference_budget = InferenceBudget(4)
         seed_task = None
+        seed_link_task = None
+        metadata_only = mode in ('quick', 'lyrics_links') and 'lines' not in seed_document
         inference_gate = asyncio.Semaphore(1)
         def trace(**event):
             event = {'elapsed_ms': round((time.monotonic() - started)*1000), **event}
@@ -131,42 +133,86 @@ class JobManager:
             publish_profile(job, document['song_id'], seed_document['song_id'], value)
             return value
 
+        async def lyric_link(song_id):
+            try:
+                return await asyncio.wait_for(asyncio.to_thread(fetch_song_source_url, song_id),
+                                              timeout=max(.01, min(12, deadline - time.monotonic())))
+            except Exception as error:
+                trace(agent='lyrics', action='source_link', status='failed', song_id=str(song_id), error=type(error).__name__)
+                return None
+
+        async def catalog_links(result, song_id):
+            candidate_link = await lyric_link(song_id)
+            seed_link = await asyncio.shield(seed_link_task)
+            if candidate_link or seed_link:
+                result['sources'] = {'seed': seed_link, 'candidate': candidate_link}
+
+        async def catalog_sources(match, result):
+            if mode == 'lyrics_links':
+                await catalog_links(result, match['id'])
+                return result['sources']
+            metadata = match.get('metadata', {})
+            artist = metadata.get('artist')
+            if isinstance(artist, list):
+                artist = next(iter(artist), None)
+            if metadata.get('title') and artist:
+                document = {'song_id': str(match['id']), 'title': metadata['title'], 'artist': artist}
+                await asyncio.gather(catalog_links(result, match['id']), profile(document))
+            else:
+                await catalog_links(result, match['id'])
+            return result['sources'] or (result['profile'] or {}).get('sources')
+
         async def candidate(match):
             result = {'status': 'running', 'profile': None, 'comparison': None,
                       'explanation': None, 'sources': None, 'errors': [], 'lyric_overlap': None, 'vibe_description': None}
             job['results'][str(match['id'])] = result
             try:
-                # Request-scoped clients avoid sharing lyricsgenius state between workers.
-                document = await asyncio.to_thread(fetch_song_document, make_genius_client(), match['id'])
-                if document is None:
-                    raise ValueError('Canonical lyric document unavailable')
-                result['sources'] = {'seed': seed_document['source_url'], 'candidate': document['source_url']}
-                from services.passage_retrieval import lyric_overlap
-                result['lyric_overlap'] = lyric_overlap(seed_document, document)
-                research = await profile(document, reference=seed_task)
-                result.update(profile=research, vibe_description=research.get('vibe'),
-                    status='complete' if research.get('vibe') else 'evidence_only')
+                if metadata_only:
+                    result['status'] = 'evidence_only' if await catalog_sources(match, result) else 'unavailable'
+                else:
+                    # Request-scoped clients avoid sharing lyricsgenius state between workers.
+                    document = await asyncio.to_thread(fetch_song_document, make_genius_client(), match['id'])
+                    if document is None:
+                        raise ValueError('Canonical lyric document unavailable')
+                    result['sources'] = {'seed': seed_document['source_url'], 'candidate': document['source_url']}
+                    from services.passage_retrieval import lyric_overlap
+                    result['lyric_overlap'] = lyric_overlap(seed_document, document)
+                    research = await profile(document, reference=seed_task)
+                    result.update(profile=research, vibe_description=research.get('vibe'),
+                        status='complete' if research.get('vibe') else 'evidence_only')
             except Exception as error:
                 result.update(status='unavailable')
                 result['errors'].append({'agent': 'candidate', 'code': type(error).__name__})
             trace(agent='job', action='candidate_complete', status=result['status'], song_id=str(match['id']))
 
         async def work():
-            nonlocal seed_task
-            job.update(status='running', progress='Gathering written evidence' if mode == 'quick' else 'Finding the input song’s vibe')
+            nonlocal seed_task, seed_link_task
+            job.update(status='running', progress={'quick': 'Gathering written sources',
+                       'vibe': 'Finding the input song’s vibe', 'lyrics_links': 'Looking up Genius lyric links'}[mode])
             # Seed and candidate retrieval can overlap. Comparisons wait only for the seed result.
-            seed_task = asyncio.create_task(profile(seed_document))
+            if mode != 'lyrics_links':
+                seed_task = asyncio.create_task(profile(seed_document))
+            if metadata_only:
+                seed_link_task = asyncio.create_task(lyric_link(seed_document['song_id']))
             try:
                 await asyncio.gather(*(candidate(match) for match in matches[:3]))
-                job['seed'] = await seed_task
+                if seed_task:
+                    job['seed'] = await seed_task
             finally:
-                if not seed_task.done():
-                    seed_task.cancel()
-                    await asyncio.gather(seed_task, return_exceptions=True)
+                pending = [task for task in (seed_task, seed_link_task) if task and not task.done()]
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+            if mode != 'vibe':
+                excerpts = (job['seed'] or {}).get('sources') or any(
+                    (value['profile'] or {}).get('sources') for value in job['results'].values())
+                links = any(value['sources'] for value in job['results'].values())
+                job.update(status='complete' if excerpts or links else 'partial',
+                           progress='Written sources ready' if excerpts else 'Genius lyric links ready' if links else 'Sources unavailable for these songs')
+                return
             partial = any(value['status'] in ('unavailable', 'evidence_only') for value in job['results'].values()) or not has_analysis(job['seed'])
-            job.update(status='partial' if mode != 'quick' and partial else 'complete',
-                       progress='Sources ready; AI vibe descriptions were not requested' if mode == 'quick' else
-                       'Vibe lookup finished; some descriptions are unavailable' if partial else 'Song vibes ready')
+            job.update(status='partial' if partial else 'complete',
+                       progress='Vibe lookup finished; some descriptions are unavailable' if partial else 'Song vibes ready')
         try:
             await asyncio.wait_for(work(), timeout=seconds)
         except asyncio.TimeoutError:

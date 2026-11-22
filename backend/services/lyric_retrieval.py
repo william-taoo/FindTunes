@@ -95,3 +95,9 @@ def fetch_song_document(client, genius_id):
     if song is None or song_id(song) != str(genius_id):
         return None
     return song_to_document(song)
+
+
+def fetch_song_source_url(genius_id):
+    """Get the canonical Genius link without downloading the lyrics page."""
+    song = make_genius_client().song(int(genius_id)).get('song', {})
+    return song.get('url') if str(song.get('id')) == str(genius_id) else None

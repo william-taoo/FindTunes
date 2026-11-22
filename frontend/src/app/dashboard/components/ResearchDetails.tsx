@@ -22,10 +22,10 @@ export interface ResearchResult {
     profile: ResearchProfile | null;
     comparison: { similarities: {label: string; explanation: string}[]; differences: {label: string; explanation: string}[]; limitation: string } | null;
     explanation: {summary: string; shared_themes: string[]; difference: string} | null;
-    sources: {seed: string; candidate: string} | null;
+    sources: {seed: string | null; candidate: string | null} | null;
 }
 export interface ResearchJob {
-    id: string; status: string; progress: string; seed: ResearchProfile | null; mode?: 'quick' | 'vibe' | 'deep';
+    id: string; status: string; progress: string; seed: ResearchProfile | null; mode?: 'quick' | 'vibe' | 'deep' | 'lyrics_links';
     results: Record<string, ResearchResult>;
     trace: {agent: string; action: string; duration_ms?: number; status: string; decision?: {action: string; reason: string}}[];
 }
@@ -68,7 +68,7 @@ function SourceExcerpts({ profile }: {profile?: ResearchProfile | null}) {
         seen.add(source.url); return true;
     }).slice(0, 4);
     if (!sources.length) return null;
-    return <details open><summary>Sources behind the vibe</summary>
+    return <details open><summary>{profile?.mode === 'quick' ? 'Written excerpts' : 'Sources behind the vibe'}</summary>
         {sources.map(source => {
             let url: URL;
             try { url = new URL(source.url); if (url.protocol !== 'https:') return null; } catch { return null; }
@@ -79,17 +79,27 @@ function SourceExcerpts({ profile }: {profile?: ResearchProfile | null}) {
 }
 
 export default function ResearchDetails({ result, seed }: {result?: ResearchResult; seed?: ResearchProfile | null}) {
+    if (!result?.profile && !result?.vibe_description && !seed && !result?.lyric_overlap) return null;
     const outcome = musicalOutcome(result);
     const description = vibeDescription(result);
+    const writtenOnly = result?.profile?.mode === 'quick' || seed?.mode === 'quick' || outcome.code === 'sources_only';
+    const showVibe = !writtenOnly && Boolean(result?.profile || description || seed?.vibe);
     return <div className="ft-research-details">
-        <section className="ft-ai-observation" aria-label="Song vibe">
+        {showVibe && <section className="ft-ai-observation" aria-label="Song vibe">
             <h3>The vibe</h3>
             {description ? <><p>{description}</p><p className="ft-muted">{outcome.message}</p></> :
                 <><p className="ft-muted" role="status">{outcome.label}</p><p>{outcome.message}</p></>}
             {seed?.vibe && <div className="ft-difference"><h4>Your song · {seed.song.title}</h4><p>{seed.vibe}</p></div>}
-        </section>
+        </section>}
+        {writtenOnly && <section className="ft-ai-observation" aria-label="Written sources">
+            <h3>Written sources</h3>
+            <p className="ft-muted" role="status">{outcome.code === 'sources_only' ? 'Sources only' :
+                outcome.code === 'searching' || result?.status === 'running' ? 'Looking up written sources…' :
+                'No written excerpts available for this track.'}</p>
+        </section>}
         <SourceExcerpts profile={result?.profile}/>
         {seed?.sources.length ? <details open><summary>Sources for your song</summary><SourceExcerpts profile={seed}/></details> : null}
+        {(seed?.sources.length || result?.profile?.sources.length) ? <p className="ft-muted">Web search by <a href="https://brave.com/search/api/" target="_blank" rel="noopener noreferrer">Brave</a></p> : null}
         {result?.lyric_overlap && <details open><summary>Lyric wording comparison</summary>
             <p>Scanned {result.lyric_overlap.seed_lines_scanned} original lines and {result.lyric_overlap.candidate_lines_scanned} suggestion lines across all available lyric sections.</p>
             <p>{result.lyric_overlap.shared_words.length ? `Shared wording: ${result.lyric_overlap.shared_words.join(', ')}.` : 'No shared content words found.'}</p>
