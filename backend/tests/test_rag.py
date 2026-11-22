@@ -14,7 +14,8 @@ from services import rag, local_llm
 with patch.dict(sys.modules, {'lyricsgenius': SimpleNamespace(Genius=Mock())}):
     retrieval = importlib.import_module('services.lyric_retrieval')
 with patch.dict(sys.modules, {
-    'services.pinecone_utils': SimpleNamespace(query_vector=Mock(), ingestion_enabled=lambda: True),
+    'services.pinecone_utils': SimpleNamespace(query_vector=Mock(), ingestion_enabled=lambda: True,
+                                               catalog_song_for_spotify_track=Mock()),
     'services.lyric_retrieval': retrieval,
 }):
     route = importlib.import_module('app.routers.recommend')
@@ -28,6 +29,29 @@ def song(song_id=1):
 
 
 class RagTests(unittest.TestCase):
+    def test_selected_spotify_track_uses_indexed_identity_before_genius(self):
+        track_id = '1234567890abcdefghijkl'
+        identity = {'id': '42', 'title': 'Test Song', 'artist': 'Test Artist'}
+        with patch.object(route, 'ingestion_enabled', return_value=False), \
+             patch.object(route, 'catalog_song_for_spotify_track', return_value=identity) as lookup, \
+             patch.object(route, 'make_genius_client') as genius, \
+             patch.object(route, 'query_vector', return_value=[{'id': '73'}]) as query:
+            seed, matches = route.retrieve_base('Spotify title', 'Spotify artist', track_id)
+        lookup.assert_called_once_with(track_id)
+        genius.assert_not_called()
+        query.assert_called_once_with('42', 'Test Song', 'Test Artist')
+        self.assertIsNone(seed)
+        self.assertEqual(matches[0]['seed_song'], identity)
+
+    def test_catalog_text_lookup_allows_accent_and_credit_differences(self):
+        client = Mock()
+        client.search_songs.return_value = {'hits': [{'type': 'song', 'result': {
+            'id': 42, 'title': 'Test Song', 'primary_artist': {'name': 'Other Artist'},
+            'primary_artists': [{'name': 'Beyoncé'}],
+        }}]}
+        self.assertEqual(retrieval.search_song_identity(client, 'Test Song!', 'Beyonce', exact_title=True)['id'], '42')
+        self.assertIsNone(retrieval.search_song_identity(client, 'Different Song', 'Beyonce', exact_title=True))
+
     def test_api_allows_title_only_and_ingests_resolved_artist(self):
         client = Mock()
         client.search_song.return_value = song()

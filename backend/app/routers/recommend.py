@@ -1,9 +1,9 @@
 import logging
 import asyncio
 import os
-from typing import Literal
+from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query
-from services.pinecone_utils import ingestion_enabled, query_vector
+from services.pinecone_utils import catalog_song_for_spotify_track, ingestion_enabled, query_vector
 from services.lyric_retrieval import make_genius_client, song_to_document, fetch_song_document, song_id, song_artist, search_song_identity, search_song_with_retry
 from services.rag import is_configured, explain_match
 
@@ -11,23 +11,27 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def retrieve_base(song_name, artist_name):
+def retrieve_base(song_name, artist_name, spotify_track_id=None):
     song_name, artist_name = song_name.strip(), artist_name.strip()
     if not song_name:
         raise HTTPException(400, 'Enter a song title to get recommendations.')
     catalog_only = not ingestion_enabled()
     song = None
+    resolved = catalog_song_for_spotify_track(spotify_track_id) if catalog_only and spotify_track_id else None
     try:
-        client = make_genius_client()
-        if catalog_only:
-            resolved = search_song_identity(client, song_name, artist_name)
-        else:
-            song = search_song_with_retry(client, song_name, artist_name)
-            resolved = {'id': song_id(song), 'title': song.title, 'artist': song_artist(song)} if song else None
+        if resolved is None:
+            client = make_genius_client()
+            if catalog_only:
+                resolved = search_song_identity(client, song_name, artist_name, exact_title=bool(spotify_track_id))
+            else:
+                song = search_song_with_retry(client, song_name, artist_name)
+                resolved = {'id': song_id(song), 'title': song.title, 'artist': song_artist(song)} if song else None
     except Exception as error:
         logger.warning('Song lookup failed (%s)', type(error).__name__)
         raise HTTPException(502, 'Could not retrieve the input song')
     if resolved is None:
+        if spotify_track_id and catalog_only:
+            raise HTTPException(404, 'We could not match this Spotify track to the FindTunes catalog. Try another track.')
         raise HTTPException(404, 'Song not found; refine the title or artist.')
     matches = query_vector(resolved['id'], resolved['title'], resolved['artist'])
     if matches is None:
@@ -42,9 +46,10 @@ def retrieve_base(song_name, artist_name):
 @router.get('/recommend/stream')
 async def recommend_stream(song_name: str = Query(min_length=1, max_length=200),
                            artist_name: str = Query(default='', max_length=200),
-                           research_mode: Literal['quick', 'vibe', 'deep'] = 'vibe'):
+                           research_mode: Literal['quick', 'vibe', 'deep'] = 'vibe',
+                           spotify_track_id: Annotated[str | None, Query(pattern=r'^[A-Za-z0-9]{22}$')] = None):
     """Return Pinecone candidates before inference/research; poll the attached job."""
-    seed, matches = await asyncio.to_thread(retrieve_base, song_name, artist_name)
+    seed, matches = await asyncio.to_thread(retrieve_base, song_name, artist_name, spotify_track_id)
     job_id = None
     if seed and matches and os.getenv('RESEARCH_ENABLED', 'true').lower() not in ('false', '0', 'no'):
         try:

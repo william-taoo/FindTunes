@@ -17,6 +17,26 @@ index = pc.Index(host=host_url)
 def ingestion_enabled():
     return os.getenv('CATALOG_INGESTION_ENABLED', 'true').lower() not in ('false', '0', 'no')
 
+def catalog_song_for_spotify_track(track_id):
+    try:
+        records = index.fetch_by_metadata(filter={'spotify_track_id': {'$eq': track_id}},
+                                          namespace=NAMESPACE, limit=2).vectors
+    except Exception as error:
+        print(f'Spotify catalog lookup failed ({type(error).__name__})')
+        return None
+    if len(records) != 1:
+        return None
+
+    record = next(iter(records.values()))
+    metadata = record.metadata or {}
+    artist = metadata.get('artist')
+    if isinstance(artist, list):
+        artist = artist[0] if artist else None
+    if not metadata.get('title') or not artist:
+        return None
+    return {'id': record.id, 'title': metadata['title'], 'artist': artist}
+
+
 def upsert_vector(id: int, vector: list, metadata: dict) -> None:
     try:
         index.upsert(vectors=[{"id": id, "values": vector, "metadata": metadata}], namespace=NAMESPACE)

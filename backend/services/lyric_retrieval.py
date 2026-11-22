@@ -2,6 +2,7 @@
 import os
 import re
 import time
+import unicodedata
 from dotenv import load_dotenv
 from lyricsgenius import Genius
 
@@ -40,16 +41,29 @@ def search_song_with_retry(client, title, artist):
     return None
 
 
-def search_song_identity(client, title, artist):
+def match_text(value):
+    text = unicodedata.normalize('NFKD', value.casefold())
+    return ''.join(char for char in text if char.isalnum())
+
+
+def search_song_identity(client, title, artist, *, exact_title=False):
     """Resolve an indexed song without fetching its lyrics page."""
     query = f'{title} {artist}'.strip()
     hits = client.search_songs(query, per_page=5).get('hits', [])
     songs = [hit['result'] for hit in hits if hit.get('type') == 'song']
-    if artist:
-        songs = [song for song in songs if song['primary_artist']['name'].casefold() == artist.casefold()]
+    artist_key = match_text(artist)
+    if artist_key:
+        songs = [song for song in songs if artist_key in {
+            match_text(credit['name']) for credit in [song['primary_artist'], *(song.get('primary_artists') or [])]
+        }]
     if not songs:
         return None
-    match = next((song for song in songs if song['title'].casefold() == title.casefold()), songs[0])
+    title_key = match_text(title)
+    match = next((song for song in songs if match_text(song['title']) == title_key), None)
+    if match is None:
+        if exact_title:
+            return None
+        match = songs[0]
     return {'id': str(match['id']), 'title': match['title'], 'artist': match['primary_artist']['name']}
 
 

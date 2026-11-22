@@ -83,6 +83,7 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
 }) {
     const [songName, setSongName] = useState('Bad Habit');
     const [artistName, setArtistName] = useState('Steve Lacy');
+    const [spotifyTrackId, setSpotifyTrackId] = useState<string>();
     const [loading, setLoading] = useState(false);
     const [includeVibes, setIncludeVibes] = useState(true);
     const [recommendations, setRecommendations] = useState<Recommendation[]>(initialRecommendations);
@@ -97,7 +98,12 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
     useEffect(() => { onSongChange?.({name: songName, artist: artistName}); }, [songName, artistName, onSongChange]);
     const canRecommend = !!songName.trim() && !loading;
     useEffect(() => {
-        if (selectedTrack) { setSongName(selectedTrack.name); setArtistName(selectedTrack.artist); songInput.current?.focus(); }
+        if (selectedTrack) {
+            setSongName(selectedTrack.name);
+            setArtistName(selectedTrack.artist);
+            setSpotifyTrackId(/^[A-Za-z0-9]{22}$/.test(selectedTrack.id) ? selectedTrack.id : undefined);
+            songInput.current?.focus();
+        }
     }, [selectedTrack]);
     useEffect(() => { if (hasSearched) results.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' }); }, [hasSearched]);
     useEffect(() => {
@@ -136,7 +142,10 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
         setJobId(null); setResearchJob(null); setResearchProgress('');
         try {
             const response = await axios.get<{recommendations: Recommendation[]; research_job_id: string | null}>(`${DOMAIN}/recommend/stream`, {
-                params: { song_name: songName.trim(), artist_name: artistName.trim(), research_mode: includeVibes ? 'vibe' : 'quick' },
+                params: {
+                    song_name: songName.trim(), artist_name: artistName.trim(),
+                    spotify_track_id: spotifyTrackId, research_mode: includeVibes ? 'vibe' : 'quick',
+                },
             });
             setRecommendations(response.data.recommendations || []); setHasSearched(true);
             setJobId(response.data.research_job_id);
@@ -151,8 +160,8 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
         <form className="ft-search-panel" onSubmit={event => { event.preventDefault(); void handleRecommend(); }}>
             <div className="ft-section-heading"><h2>Start with a song</h2><span className="ft-pill">LYRICS → DISCOVERY</span></div>
             <div className="ft-search-fields">
-                <div><label htmlFor="recommend-song">Song title <span>Required</span></label><input ref={songInput} id="recommend-song" placeholder="What’s on repeat?" required maxLength={200} value={songName} onChange={e => setSongName(e.target.value)} aria-describedby="recommend-help" disabled={loading} /></div>
-                <div><label htmlFor="recommend-artist">Artist <span>Optional</span></label><input id="recommend-artist" placeholder="e.g. Steve Lacy" maxLength={200} value={artistName} onChange={e => setArtistName(e.target.value)} aria-describedby="recommend-help" disabled={loading} /></div>
+                <div><label htmlFor="recommend-song">Song title <span>Required</span></label><input ref={songInput} id="recommend-song" placeholder="What’s on repeat?" required maxLength={200} value={songName} onChange={e => { setSongName(e.target.value); setSpotifyTrackId(undefined); }} aria-describedby="recommend-help" disabled={loading} /></div>
+                <div><label htmlFor="recommend-artist">Artist <span>Optional</span></label><input id="recommend-artist" placeholder="e.g. Steve Lacy" maxLength={200} value={artistName} onChange={e => { setArtistName(e.target.value); setSpotifyTrackId(undefined); }} aria-describedby="recommend-help" disabled={loading} /></div>
                 <button type="submit" className="ft-primary" disabled={!canRecommend}>{loading ? <><span className="ft-spinner" /> Finding songs</> : <>Recommend some new songs <span>↗</span></>}</button>
             </div>
             <p id="recommend-help" className="ft-input-help">An artist helps with shared song titles. For collaborations, the main artist is enough. Title-only searches use the first match.</p>
