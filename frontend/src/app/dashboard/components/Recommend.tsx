@@ -202,7 +202,7 @@ export default function Recommend({ selectedTrack, artworkById = {}, initialReco
                     <div className="ft-card-bottom"><span>{rec.explanation?.shared_themes[0] || 'Lyrical connection'}</span><span>Explore →</span></div>
                 </button>)}</div>
                 {!!researchJob?.trace.length && <details className="ft-research-trace"><summary>Research activity</summary>{researchJob.trace.map((event, i) => <p key={i}>{event.agent} · {event.action} · {event.status}{event.duration_ms !== undefined && ` · ${(event.duration_ms / 1000).toFixed(1)}s`}{event.decision && ` · ${event.decision.action}: ${event.decision.reason}`}</p>)}</details>}
-            </> : <div className="ft-empty-state"><span className="ft-empty-record" aria-hidden="true">♪</span><h3>{hasSearched ? 'No discoveries just yet' : 'A song you love. A song you haven’t met.'}</h3><p>{hasSearched ? 'Try another song to find a new connection.' : 'Enter a title above, or pick a track from your rotation below.'}</p></div>}
+            </> : <div className="ft-empty-state"><span className="ft-empty-record" aria-hidden="true">♪</span><h3>{hasSearched ? 'No discoveries just yet' : 'A song you love. A song you haven’t met.'}</h3><p>{hasSearched ? 'Try another song to find a new connection.' : 'Enter a song title above to find related tracks.'}</p></div>}
         </div>
         {selected !== null && recommendations[selected] && <Details rec={recommendations[selected]} index={selected} image={imageFor(recommendations[selected])} seed={researchJob?.seed} onClose={() => setSelected(null)} />}
     </section>;
