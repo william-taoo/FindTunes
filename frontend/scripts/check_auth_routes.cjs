@@ -9,7 +9,10 @@ function load(relative) {
     const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', relative), 'utf8'), {
         compilerOptions: {module: ts.ModuleKind.CommonJS, esModuleInterop: true},
     }).outputText;
-    vm.runInNewContext(code, {exports, require, process, URL, URLSearchParams});
+    const requireFromRoute = name => name.startsWith('.')
+        ? load(path.join(path.dirname(relative), `${name}.ts`))
+        : require(name);
+    vm.runInNewContext(code, {exports, require: requireFromRoute, process, URL, URLSearchParams});
     return exports;
 }
 (async () => {
@@ -37,5 +40,10 @@ function load(relative) {
         headers: {host: '127.0.0.1:3000', cookie: 'spotify_auth_state=expected'},
     }));
     assert.equal(new URL(loopback.headers.get('location')).origin, 'http://127.0.0.1:3000');
+    process.env.VERCEL_ENV = 'production';
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = 'findtunes.vercel.app';
+    const production = await load('src/app/api/auth/route.ts').GET(new NextRequest('https://findtunes.vercel.app/api/auth'));
+    assert.equal(new URL(production.headers.get('location')).searchParams.get('redirect_uri'),
+        'https://findtunes.vercel.app/api/auth/callback');
     console.log('Auth route checks passed: fresh dialog, state cookie, reject mismatch, accept matching state.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

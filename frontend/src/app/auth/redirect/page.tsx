@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 const DOMAIN = process.env.NEXT_PUBLIC_DOMAIN || 'http://localhost:8000';
@@ -68,4 +68,6 @@ const AuthRedirectPage = () => {
     ) : <p>Signing you in...</p>;
 };
 
-export default AuthRedirectPage;
+export default function Page() {
+    return <Suspense fallback={<p>Signing you in...</p>}><AuthRedirectPage /></Suspense>;
+}

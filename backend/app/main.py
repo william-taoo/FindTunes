@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import spotify, profile, sync, recommend
@@ -8,10 +10,13 @@ app.include_router(profile.router)
 app.include_router(sync.router)
 app.include_router(recommend.router)
 
-# CORS configuration
+frontend_origins = ['http://localhost:3000', 'http://127.0.0.1:3000']
+if frontend_origin := os.getenv('FRONTEND_ORIGIN'):
+    frontend_origins.append(frontend_origin.rstrip('/'))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "https://findtunes.space"], # Next.js frontend
+    allow_origins=frontend_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

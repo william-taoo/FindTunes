@@ -6,21 +6,19 @@ from sqlalchemy import pool
 from alembic import context
 
 from sqlalchemy.ext.asyncio import async_engine_from_config
-from app.db.database import Base
+from app.db.database import Base, SQLALCHEMY_DATABASE_URL
 from app.db import models
 from services.research.cache import metadata as research_metadata
-import os
 import asyncio
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
-if os.getenv('DATABASE_URL'):
-    config.set_main_option('sqlalchemy.url', os.environ['DATABASE_URL'].replace('%', '%%'))
+config.set_main_option('sqlalchemy.url', SQLALCHEMY_DATABASE_URL.render_as_string(hide_password=False).replace('%', '%%'))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-if config.config_file_name is not None:
+if config.config_file_name is not None and config.file_config.has_section('loggers'):
     fileConfig(config.config_file_name)
 
 # add your model's MetaData object here

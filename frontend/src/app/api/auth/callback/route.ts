@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { spotifyCallbackUrl } from '../spotify-callback';
 
 export async function GET(req: NextRequest) {
     // Next's development server can normalize the request URL to localhost.
     // Keep the browser on the host that owns the OAuth state cookie.
-    const origin = new URL(process.env.NEXT_SPOTIFY_REDIRECT_URI!).origin;
+    const origin = spotifyCallbackUrl().origin;
     // Extract query parameters
     const { searchParams } = new URL(req.url);
     const code = searchParams.get('code');

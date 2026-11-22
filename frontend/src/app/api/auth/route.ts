@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
+import { spotifyCallbackUrl } from './spotify-callback';
 
 export async function GET(req: NextRequest) {
     // OAuth cookies belong to a hostname: localhost and 127.0.0.1 are different.
-    const callback = new URL(process.env.NEXT_SPOTIFY_REDIRECT_URI!);
+    const callback = spotifyCallbackUrl();
     const requestHost = req.headers.get('host') || new URL(req.url).host;
     if (requestHost !== callback.host) {
         return NextResponse.redirect(new URL('/api/auth', callback.origin));
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest) {
         response_type: 'code',
         client_id: process.env.NEXT_SPOTIFY_CLIENT_ID!,
         scope: scope,
-        redirect_uri: process.env.NEXT_SPOTIFY_REDIRECT_URI!,
+        redirect_uri: callback.href,
         state: state,
         show_dialog: 'true',
     });

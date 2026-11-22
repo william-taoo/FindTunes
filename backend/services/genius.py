@@ -5,7 +5,6 @@ import os
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from dotenv import load_dotenv
-from .embeddings import clean_lyrics, split_lyrics, get_song_embedding
 from .pinecone_utils import upsert_vector, fetch_vector
 from .lyric_retrieval import song_id, song_artist
 
@@ -44,6 +43,8 @@ def get_spotify_track_info(song_name: str, artist_name: str):
     return None
 
 def embed_and_store(song, artist_name: str):
+    from .embeddings import clean_lyrics, split_lyrics, get_song_embedding
+
     annotation, lyrics = split_lyrics(song.lyrics)
         
     # Clean both parts separately
