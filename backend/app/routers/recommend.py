@@ -23,6 +23,8 @@ def retrieve_base(song_name, artist_name):
         raise HTTPException(404, 'Song not found; refine the title or artist.')
     resolved = {'id': song_id(song), 'title': song.title, 'artist': song_artist(song)}
     matches = query_vector(resolved['id'], resolved['title'], resolved['artist'])
+    if matches is None:
+        raise HTTPException(404, 'This song is outside the current FindTunes catalog. Try another title.')
     if matches == -1:
         raise HTTPException(502, 'Song similarity search failed')
     return song_to_document(song), [{**match, 'seed_song': resolved, 'explanation': None,
@@ -85,6 +87,8 @@ def recommend_songs(song_name: str = Query(min_length=1, max_length=200),
     resolved = {'id': song_id(song), 'title': song.title, 'artist': song_artist(song)}
     # Ingestion must use the resolved identity when the user omits the artist.
     matches = query_vector(resolved['id'], resolved['title'], resolved['artist'])
+    if matches is None:
+        raise HTTPException(404, 'This song is outside the current FindTunes catalog. Try another title.')
     if matches == -1:
         raise HTTPException(502, 'Song similarity search failed')
     seed = song_to_document(song)

@@ -13,6 +13,10 @@ host_url = os.getenv('PINECONE_HOST')
 pc = pinecone.Pinecone(api_key=api_key)
 index = pc.Index(host=host_url)
 
+
+def ingestion_enabled():
+    return os.getenv('CATALOG_INGESTION_ENABLED', 'true').lower() not in ('false', '0', 'no')
+
 def upsert_vector(id: int, vector: list, metadata: dict) -> None:
     try:
         index.upsert(vectors=[{"id": id, "values": vector, "metadata": metadata}], namespace=NAMESPACE)
@@ -46,9 +50,11 @@ def wait_for_vector(genius_id):
     return False
 
 def query_vector(genius_id: int, song_name: str, artist_name: str):
-    from .genius import process_song
     try:
         if not fetch_vector(str(genius_id)):
+            if not ingestion_enabled():
+                return None
+            from .genius import process_song
             indexed_id = process_song(song_name, artist_name)
             if indexed_id is not None and str(indexed_id) != str(genius_id):
                 raise ValueError('Ingestion resolved a different Genius song ID')

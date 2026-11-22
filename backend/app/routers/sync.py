@@ -4,6 +4,7 @@ from ..db.database import get_db
 from ..db import crud
 from ..sessions import current_user, require_owner
 from services.genius import process_artist_songs, process_song
+from services.pinecone_utils import ingestion_enabled
 from services.sync_state import reserve, release, worker_lock
 
 router = APIRouter()
@@ -26,6 +27,8 @@ def run_sync_job(user, artists, tracks):
 async def sync_songs_to_db(spotify_id: str, background_tasks: BackgroundTasks,
                            db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     require_owner(spotify_id, user)
+    if not ingestion_enabled():
+        return {'status': 'disabled'}
     profile = await crud.get_user_profile(db, spotify_id)
     if not profile or not profile['user']:
         raise HTTPException(404, 'User not found')
