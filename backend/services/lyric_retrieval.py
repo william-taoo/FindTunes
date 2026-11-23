@@ -46,9 +46,24 @@ def match_text(value):
     return ''.join(char for char in text if char.isalnum())
 
 
+def title_without_feature_credit(title):
+    # Spotify can append credits that Genius stores separately from the title.
+    # Keep recording qualifiers such as Live, Remix, and Demo intact.
+    credit = r'\s*(?:feat(?:uring)?|ft)\.?\s+[^()\[\]]+'
+    bracketed = re.sub(rf'\s*(?:\({credit}\)|\[{credit}\])\s*$', '', title, flags=re.I).strip()
+    if bracketed != title and bracketed:
+        return bracketed
+
+    parts = re.split(r'(\s+[-–—]\s+)', title)
+    if len(parts) > 1 and re.fullmatch(credit, parts[-1], flags=re.I):
+        return ''.join(parts[:-2]).strip() or title
+    return title
+
+
 def search_song_identity(client, title, artist, *, exact_title=False):
     """Resolve an indexed song without fetching its lyrics page."""
-    query = f'{title} {artist}'.strip()
+    recording_title = title_without_feature_credit(title)
+    query = f'{recording_title} {artist}'.strip()
     hits = client.search_songs(query, per_page=5).get('hits', [])
     songs = [hit['result'] for hit in hits if hit.get('type') == 'song']
     artist_key = match_text(artist)
@@ -60,6 +75,10 @@ def search_song_identity(client, title, artist, *, exact_title=False):
         return None
     title_key = match_text(title)
     match = next((song for song in songs if match_text(song['title']) == title_key), None)
+    if match is None:
+        recording_key = match_text(recording_title)
+        match = next((song for song in songs
+                      if match_text(title_without_feature_credit(song['title'])) == recording_key), None)
     if match is None:
         if exact_title:
             return None

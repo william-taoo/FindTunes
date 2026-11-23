@@ -52,6 +52,17 @@ class RagTests(unittest.TestCase):
         self.assertEqual(retrieval.search_song_identity(client, 'Test Song!', 'Beyonce', exact_title=True)['id'], '42')
         self.assertIsNone(retrieval.search_song_identity(client, 'Different Song', 'Beyonce', exact_title=True))
 
+    def test_selected_track_can_match_with_spotify_feature_credit(self):
+        client = Mock()
+        client.search_songs.return_value = {'hits': [{'type': 'song', 'result': {
+            'id': 3710605, 'title': 'Fell in Luv', 'primary_artist': {'name': 'Playboi Carti'},
+        }}]}
+        song = retrieval.search_song_identity(client, 'Fell In Luv (feat. Bryson Tiller)', 'Playboi Carti', exact_title=True)
+        self.assertEqual(song['id'], '3710605')
+        client.search_songs.assert_called_once_with('Fell In Luv Playboi Carti', per_page=5)
+        self.assertIsNone(retrieval.search_song_identity(
+            client, 'Fell In Luv (feat. Bryson Tiller) [Live]', 'Playboi Carti', exact_title=True))
+
     def test_api_allows_title_only_and_ingests_resolved_artist(self):
         client = Mock()
         client.search_song.return_value = song()
